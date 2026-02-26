@@ -1,0 +1,35 @@
+{
+    "L1_to_L2": {
+        "role": "Classification",
+        "rule": "Identify specific distinct entities, groups, or categories belonging to L1.",
+        "format": "Nouns (e.g., 'Freelancers', 'Instagram')",
+        "count_range": [
+            3,
+            5
+        ],
+        "min_per_request": 1,
+        "max_children": 5
+    },
+    "L2_to_L3": {
+        "role": "Diagnosis",
+        "rule": "Analyze the specific characteristics, pain points, or needs of L2. Do NOT define the term. Explain 'Why it matters' or 'What is the situation'.",
+        "format": "Descriptive phrases (e.g., 'Needs quiet space', 'Visual driven')",
+        "count_range": [
+            2,
+            4
+        ],
+        "min_per_request": 1,
+        "max_children": 4
+    },
+    "L3_to_L4": {
+        "role": "Action",
+        "rule": "Propose creative and concrete actionable ideas to address L3. Focus on 'Execution'.",
+        "format": "Action verbs (e.g., 'Install power outlets', 'Run a hashtag event')",
+        "count_range": [
+            1,
+            3
+        ],
+        "min_per_request": 1,
+        "max_children": 3
+    }
+}

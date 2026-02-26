@@ -1,0 +1,574 @@
+{
+    "LEAN_CREATION": {
+        "intent": "creation",
+        "Korean": [
+            {
+                "label": "Problem: 고객이 겪는 가장 고통스러운 문제 Top 3",
+                "display": "해결하고 싶은 진짜 문제는?"
+            },
+            {
+                "label": "Customer Segments: 그 문제 때문에 밤잠 설치는 사람들",
+                "display": "누가 제일 힘들어할까?"
+            },
+            {
+                "label": "UVP: 우리 제품 한 줄 요약 (차별점)",
+                "display": "우린 뭐가 그렇게 다를까?"
+            },
+            {
+                "label": "Solution: 문제를 해결해 줄 핵심 기능",
+                "display": "어떻게 해결해 줄까?"
+            },
+            {
+                "label": "Unfair Advantage: 남들이 쉽게 따라 못 하는 무기",
+                "display": "따라 할 테면 따라 해봐라?"
+            },
+            {
+                "label": "Revenue: 돈 버는 방법",
+                "display": "수익은 어디서 날까?"
+            },
+            {
+                "label": "Cost: 돈 쓰는 곳",
+                "display": "비용은 얼마나 들까?"
+            },
+            {
+                "label": "Key Metrics: 성공 여부를 가르는 숫자",
+                "display": "성공의 기준은 뭘로 잡을까?"
+            },
+            {
+                "label": "Channels: 고객에게 알리는 방법",
+                "display": "어떻게 소문낼까?"
+            }
+        ]
+    },
+    "PERSONA_CREATION": {
+        "intent": "creation",
+        "Korean": [
+            {
+                "label": "Profile: 가상 고객의 나이, 직업, 사는 곳",
+                "display": "그 사람은 누구일까?"
+            },
+            {
+                "label": "Needs: 그 사람이 간절히 원하는 것",
+                "display": "무엇을 제일 원할까?"
+            },
+            {
+                "label": "Pain Points: 그 사람을 괴롭히는 것들",
+                "display": "요즘 뭐 때문에 스트레스 받을까?"
+            },
+            {
+                "label": "Behavior: 정보 습득 경로와 소비 습관",
+                "display": "평소에 어디서 돈을 쓸까?"
+            },
+            {
+                "label": "Trigger: 우리 제품을 찾게 되는 결정적 순간",
+                "display": "어떤 순간에 우리가 필요할까?"
+            }
+        ]
+    },
+    "SCAMPER_CREATION": {
+        "intent": "creation",
+        "Korean": [
+            {
+                "label": "Substitute: 다른 걸로 대체해보기",
+                "display": "다른 재료나 사람으로 바꾸면?"
+            },
+            {
+                "label": "Combine: 두 가지를 합쳐보기",
+                "display": "이거랑 저거랑 섞으면?"
+            },
+            {
+                "label": "Adapt: 다른 분야 아이디어 가져오기",
+                "display": "다른 데서 힌트를 얻을 순 없을까?"
+            },
+            {
+                "label": "Modify: 모양이나 성질 바꿔보기",
+                "display": "모양을 좀 비틀어보면?"
+            },
+            {
+                "label": "Put to other uses: 다른 용도로 써보기",
+                "display": "완전 딴 데다 써보면 어떨까?"
+            },
+            {
+                "label": "Eliminate: 없애버리기",
+                "display": "과감하게 뺄 건 없을까?"
+            },
+            {
+                "label": "Reverse: 거꾸로 해보기",
+                "display": "순서를 뒤집으면 어떻게 될까?"
+            }
+        ]
+    },
+    "BMC_CREATION": {
+        "intent": "creation",
+        "Korean": [
+            {
+                "label": "Value Propositions: 고객에게 제공할 독창적인 가치",
+                "display": "고객에게 줄 선물은?"
+            },
+            {
+                "label": "Customer Segments: 핵심 타겟 고객",
+                "display": "누가 그 선물을 받을까?"
+            },
+            {
+                "label": "Channels: 고객과의 접점",
+                "display": "어디서 만날까?"
+            },
+            {
+                "label": "Customer Relationships: 고객 관계 유지 전략",
+                "display": "어떻게 친해질까?"
+            },
+            {
+                "label": "Revenue Streams: 수익 모델",
+                "display": "돈은 어떻게 벌까?"
+            },
+            {
+                "label": "Key Resources: 핵심 자원",
+                "display": "꼭 필요한 재료는?"
+            },
+            {
+                "label": "Key Activities: 핵심 활동",
+                "display": "매일 해야 할 일은?"
+            },
+            {
+                "label": "Key Partnerships: 핵심 파트너",
+                "display": "누가 도와줄까?"
+            },
+            {
+                "label": "Cost Structure: 비용 구조",
+                "display": "돈은 어디에 쓸까?"
+            }
+        ]
+    },
+    "SWOT_CREATION": {
+        "intent": "creation",
+        "Korean": [
+            {
+                "label": "Strengths: 경쟁사 대비 압도적인 강점",
+                "display": "우리가 가진 확실한 무기는?"
+            },
+            {
+                "label": "Weaknesses: 시작 단계에서 부족한 점",
+                "display": "시작할 때 부족한 점은?"
+            },
+            {
+                "label": "Opportunities: 시장의 빈틈이나 기회",
+                "display": "시장의 빈틈은 어디일까?"
+            },
+            {
+                "label": "Threats: 외부의 방해 요소나 경쟁",
+                "display": "가장 걱정되는 장애물은?"
+            }
+        ]
+    },
+    "PESTEL_CREATION": {
+        "intent": "creation",
+        "Korean": [
+            {
+                "label": "Political/Legal: 법적 규제나 정책 이슈",
+                "display": "법적으로 걸리는 건 없을까?"
+            },
+            {
+                "label": "Economic: 초기 자본과 시장 상황",
+                "display": "지금 장사하기 좋은 타이밍일까?"
+            },
+            {
+                "label": "Social Trend: 사람들의 유행과 선호도",
+                "display": "사람들이 이런 걸 좋아할까?"
+            },
+            {
+                "label": "Technological: 기술적 구현 가능성",
+                "display": "기술적으로 구현 가능할까?"
+            }
+        ]
+    },
+    "CAUSE_DIAGNOSIS": {
+        "intent": "diagnosis",
+        "Korean": [
+            {
+                "label": "People: 사람이나 조직의 문제",
+                "display": "사람이 문제였을까?"
+            },
+            {
+                "label": "Methods: 프로세스나 방식의 문제",
+                "display": "일하는 방식이 꼬인 걸까?"
+            },
+            {
+                "label": "Environment: 환경이나 분위기 문제",
+                "display": "분위기나 타이밍이 안 좋았나?"
+            },
+            {
+                "label": "Materials/Equipment: 도구나 예산 문제",
+                "display": "장비나 돈 탓을 좀 해볼까?"
+            }
+        ]
+    },
+    "5WHYS_DIAGNOSIS": {
+        "intent": "diagnosis",
+        "Korean": [
+            {
+                "label": "1st Why: 표면적인 원인",
+                "display": "왜 그런 문제가 생겼을까?"
+            },
+            {
+                "label": "2nd Why: 첫 번째 원인의 배경",
+                "display": "그건 또 왜 그랬을까?"
+            },
+            {
+                "label": "3rd Why: 프로세스 상의 허점",
+                "display": "어디서부터 꼬인 걸까?"
+            },
+            {
+                "label": "4th Why: 시스템의 부재",
+                "display": "시스템은 왜 작동 안 했을까?"
+            },
+            {
+                "label": "5th Why: 근본적인 해결책이 필요한 원인",
+                "display": "결국 진짜 범인은 누구일까?"
+            }
+        ]
+    },
+    "LOGIC_DIAGNOSIS": {
+        "intent": "diagnosis",
+        "Korean": [
+            {
+                "label": "Who: 문제와 관련된 사람",
+                "display": "누가 연관되어 있나?"
+            },
+            {
+                "label": "When: 문제가 발생한 시점",
+                "display": "언제부터 문제가 생겼나?"
+            },
+            {
+                "label": "Where: 문제가 발생한 장소",
+                "display": "어디서 문제가 터졌나?"
+            },
+            {
+                "label": "What: 구체적인 문제 현상",
+                "display": "무슨 일이 벌어진 건가?"
+            },
+            {
+                "label": "How: 문제가 전개된 과정",
+                "display": "어떻게 진행되었나?"
+            },
+            {
+                "label": "Why: 문제가 발생한 이유 추정",
+                "display": "왜 일어났다고 생각하나?"
+            }
+        ]
+    },
+    "SWOT_DIAGNOSIS": {
+        "intent": "diagnosis",
+        "Korean": [
+            {
+                "label": "Strengths: 문제 속에서도 유지되는 강점",
+                "display": "그래도 아직 살아있는 강점은?"
+            },
+            {
+                "label": "Weaknesses: 문제를 일으킨 내부 원인",
+                "display": "무엇 때문에 사단이 났을까?"
+            },
+            {
+                "label": "Opportunities: 문제 해결 후의 개선점",
+                "display": "이걸 고치면 뭐가 좋아질까?"
+            },
+            {
+                "label": "Threats: 방치했을 때의 최악의 상황",
+                "display": "안 고치고 놔두면 어떻게 될까?"
+            }
+        ]
+    },
+    "BMC_DIAGNOSIS": {
+        "intent": "diagnosis",
+        "Korean": [
+            {
+                "label": "Value Check: 가치가 예전 같지 않은지 점검",
+                "display": "고객이 변심한 건 아닐까?"
+            },
+            {
+                "label": "Churn Analysis: 고객 이탈 원인",
+                "display": "누가 우리를 떠나고 있나?"
+            },
+            {
+                "label": "Revenue Leakage: 수익 누수 구간",
+                "display": "돈이 어디서 새고 있을까?"
+            },
+            {
+                "label": "Cost Inefficiency: 비용 낭비 구간",
+                "display": "쓸데없이 나가는 돈은 없나?"
+            }
+        ]
+    },
+    "PROCESS_DIAGNOSIS": {
+        "intent": "diagnosis",
+        "Korean": [
+            {
+                "label": "Plan Audit: 기획 단계의 실수",
+                "display": "첫 단추를 잘못 끼운 건 아닐까?"
+            },
+            {
+                "label": "Execution Audit: 실행 중의 실수",
+                "display": "실행하다가 삐걱댄 곳은?"
+            },
+            {
+                "label": "Delivery Audit: 결과물의 품질 문제",
+                "display": "마무리가 좀 아쉽진 않았나?"
+            },
+            {
+                "label": "Feedback Audit: 피드백 반영 여부",
+                "display": "고객 말을 흘려듣진 않았나?"
+            }
+        ]
+    },
+    "PROS_CONS_CHOICE": {
+        "intent": "choice",
+        "Korean": [
+            {
+                "label": "Pros: 선택 시 확실한 이득",
+                "display": "이걸 선택하면 뭐가 남을까?"
+            },
+            {
+                "label": "Cons: 선택 시 감수할 손해",
+                "display": "대신 뭘 포기해야 할까?"
+            },
+            {
+                "label": "Mitigation: 단점 보완책",
+                "display": "단점을 어떻게 때울까?"
+            },
+            {
+                "label": "Verdict: 최종 판단",
+                "display": "그래서, 할 만한 장사인가?"
+            }
+        ]
+    },
+    "DECISION_MATRIX_CHOICE": {
+        "intent": "choice",
+        "Korean": [
+            {
+                "label": "Option A Score: 1안의 장점과 점수",
+                "display": "첫 번째 안은 몇 점짜리일까?"
+            },
+            {
+                "label": "Option B Score: 2안의 장점과 점수",
+                "display": "두 번째 안은 몇 점짜리일까?"
+            },
+            {
+                "label": "Cost/Effort: 비용과 노력 비교",
+                "display": "가성비는 어느 쪽이 좋을까?"
+            },
+            {
+                "label": "Impact: 기대 효과 비교",
+                "display": "대박 터질 확률은 어디가 높을까?"
+            }
+        ]
+    },
+    "EISENHOWER_CHOICE": {
+        "intent": "choice",
+        "Korean": [
+            {
+                "label": "Do First: 긴급하고 중요한 일",
+                "display": "지금 당장 불 꺼야 할 일은?"
+            },
+            {
+                "label": "Schedule: 중요하지만 급하지 않은 일",
+                "display": "미리 챙겨야 할 중요한 일은?"
+            },
+            {
+                "label": "Delegate: 급하지만 내가 안 해도 되는 일",
+                "display": "누구한테 넘길 수 있을까?"
+            },
+            {
+                "label": "Don't Do: 중요하지도 급하지도 않은 일",
+                "display": "과감하게 버릴 일은?"
+            }
+        ]
+    },
+    "SWOT_CHOICE": {
+        "intent": "choice",
+        "Korean": [
+            {
+                "label": "Strengths: 이 선택지의 최대 장점",
+                "display": "이걸 선택하면 뭐가 제일 좋을까?"
+            },
+            {
+                "label": "Weaknesses: 이 선택지의 치명적 단점",
+                "display": "이 선택의 치명적인 단점은?"
+            },
+            {
+                "label": "Opportunities: 선택 후 따라올 추가 기회",
+                "display": "나중에 어떤 떡고물이 떨어질까?"
+            },
+            {
+                "label": "Threats: 선택 후 발생할 리스크",
+                "display": "혹시 뒤탈이 생기진 않을까?"
+            }
+        ]
+    },
+    "BMC_CHOICE": {
+        "intent": "choice",
+        "Korean": [
+            {
+                "label": "Value Compare: 고객 매력도 비교",
+                "display": "고객이 이걸 더 좋아할까?"
+            },
+            {
+                "label": "Profitability: 수익성 비교",
+                "display": "어느 쪽이 돈이 더 될까?"
+            },
+            {
+                "label": "Feasibility: 실현 가능성 비교",
+                "display": "현실적으로 우리가 할 수 있을까?"
+            },
+            {
+                "label": "Scalability: 확장성 비교",
+                "display": "나중에 키우기엔 뭐가 더 좋을까?"
+            }
+        ]
+    },
+    "PESTEL_CHOICE": {
+        "intent": "choice",
+        "Korean": [
+            {
+                "label": "Market Potential: 시장 성장성 비교",
+                "display": "어느 쪽 시장이 더 클까?"
+            },
+            {
+                "label": "Risk Compare: 규제 및 리스크 비교",
+                "display": "어느 쪽이 덜 위험할까?"
+            },
+            {
+                "label": "Cost Efficiency: 운영 효율성 비교",
+                "display": "어디서 하는 게 돈이 덜 들까?"
+            }
+        ]
+    },
+    "OKR_STRATEGY": {
+        "intent": "strategy",
+        "Korean": [
+            {
+                "label": "Objective: 가슴 뛰는 정성적 목표",
+                "display": "우리의 가슴을 뛰게 할 목표는?"
+            },
+            {
+                "label": "Key Result 1: 첫 번째 핵심 지표 (숫자)",
+                "display": "성공했다는 걸 보여줄 첫 번째 숫자?"
+            },
+            {
+                "label": "Key Result 2: 두 번째 핵심 지표 (숫자)",
+                "display": "성공했다는 걸 보여줄 두 번째 숫자?"
+            },
+            {
+                "label": "Initiative: 핵심 행동",
+                "display": "그래서 내일부터 당장 뭐 할까?"
+            }
+        ]
+    },
+    "KPT_STRATEGY": {
+        "intent": "strategy",
+        "Korean": [
+            {
+                "label": "Keep: 유지할 좋은 점",
+                "display": "이건 진짜 잘했다 싶은 건?"
+            },
+            {
+                "label": "Problem: 아쉬웠던 점",
+                "display": "아, 이건 좀 아쉽다 싶은 건?"
+            },
+            {
+                "label": "Try: 새롭게 시도할 점",
+                "display": "다음엔 이렇게 해보면 어떨까?"
+            }
+        ]
+    },
+    "SWOT_STRATEGY": {
+        "intent": "strategy",
+        "Korean": [
+            {
+                "label": "Strengths: 강화해야 할 핵심 역량",
+                "display": "우리가 제일 잘하는 걸 더 키우려면?"
+            },
+            {
+                "label": "Weaknesses: 개선해야 할 병목",
+                "display": "성장의 발목을 잡는 건 뭘까?"
+            },
+            {
+                "label": "Opportunities: 미래 성장 동력",
+                "display": "앞으로 3년, 어디에 기회가 있을까?"
+            },
+            {
+                "label": "Threats: 장기적 위협 요소",
+                "display": "미래에 우릴 위협할 적은 누굴까?"
+            }
+        ]
+    },
+    "PESTEL_STRATEGY": {
+        "intent": "strategy",
+        "Korean": [
+            {
+                "label": "Macro Economy: 거시 경제 전망",
+                "display": "앞으로 3년, 경기는 어떨까?"
+            },
+            {
+                "label": "Tech Shift: 미래 기술 변화",
+                "display": "AI가 우리를 어떻게 바꿀까?"
+            },
+            {
+                "label": "Demographics: 인구 및 가치관 변화",
+                "display": "고객들의 생각은 어떻게 변할까?"
+            },
+            {
+                "label": "Future Regulations: 미래 규제 리스크",
+                "display": "새로 생길 규제는 없을까?"
+            }
+        ]
+    },
+    "PROCESS_STRATEGY": {
+        "intent": "strategy",
+        "Korean": [
+            {
+                "label": "Q1 Goal: 1분기 목표",
+                "display": "1분기에 무조건 끝낼 건?"
+            },
+            {
+                "label": "Q2 Expansion: 2분기 확장 전략",
+                "display": "2분기엔 뭘 더 키워볼까?"
+            },
+            {
+                "label": "Q3 Stability: 3분기 안정화 전략",
+                "display": "3분기엔 뭘 다져야 할까?"
+            },
+            {
+                "label": "Q4 Closing: 4분기 마무리",
+                "display": "올해 마무리는 어떻게 할까?"
+            }
+        ]
+    },
+    "LOGIC_STRATEGY": {
+        "intent": "strategy",
+        "Korean": [
+            {
+                "label": "Who: 실행 책임자",
+                "display": "누가 총대를 멜까?"
+            },
+            {
+                "label": "When: 마감 기한",
+                "display": "언제까지 끝낼까?"
+            },
+            {
+                "label": "Where: 실행 채널/장소",
+                "display": "어디서 진행할까?"
+            },
+            {
+                "label": "What: 구체적 과업",
+                "display": "정확히 무엇을 만들어야 할까?"
+            },
+            {
+                "label": "How: 실행 방법론",
+                "display": "어떤 방법으로 진행할까?"
+            },
+            {
+                "label": "Why: 전략적 의의",
+                "display": "이게 왜 우리에게 중요할까?"
+            }
+        ]
+    }
+}

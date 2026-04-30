@@ -37,7 +37,7 @@ class ClarificationOption(BaseModel):
     framework_id: Optional[str] = Field(
         None,
         description="Framework ID to use if this option is selected (Turn 1 only)",
-        pattern="^(BMC|LEAN|LEAN_CANVAS|SWOT|PESTEL|PERSONA|PROCESS|CAUSE|SCAMPER|LOGIC)$",
+        pattern="^(BMC|LEAN|LEAN_CANVAS|SWOT|PESTEL|PERSONA|PROCESS|CAUSE|SCAMPER|LOGIC|5WHYS|PROS_CONS|DECISION_MATRIX|EISENHOWER|OKR|KPT)$",
         examples=["LEAN", "BMC"]
     )
 
@@ -72,7 +72,7 @@ class FrameworkDecision(BaseModel):
     selected_framework_id: Optional[str] = Field(
         None,
         description="Selected framework ID (if confidence >= 80)",
-        pattern="^(BMC|LEAN|LEAN_CANVAS|SWOT|PESTEL|PERSONA|PROCESS|CAUSE|SCAMPER|LOGIC)$",
+        pattern="^(BMC|LEAN|LEAN_CANVAS|SWOT|PESTEL|PERSONA|PROCESS|CAUSE|SCAMPER|LOGIC|5WHYS|PROS_CONS|DECISION_MATRIX|EISENHOWER|OKR|KPT)$",
         examples=["BMC", "LEAN"]
     )
     

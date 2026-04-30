@@ -33,7 +33,7 @@ class ExpandRequest(BaseModel):
     current_framework_id: str = Field(
         ...,
         description="Root framework currently in use",
-        pattern="^(BMC|LEAN|LEAN_CANVAS|SWOT|PESTEL|PERSONA|PROCESS|CAUSE|SCAMPER|LOGIC)$"
+        pattern="^(BMC|LEAN|LEAN_CANVAS|SWOT|PESTEL|PERSONA|PROCESS|CAUSE|SCAMPER|LOGIC|5WHYS|PROS_CONS|DECISION_MATRIX|EISENHOWER|OKR|KPT)$"
     )
     
     used_frameworks: List[str] = Field(
@@ -71,7 +71,7 @@ class ExpandRequest(BaseModel):
     force_framework: Optional[str] = Field(
         None,
         description="User-requested framework (manual selection)",
-        pattern="^(BMC|LEAN|LEAN_CANVAS|SWOT|PESTEL|PERSONA|PROCESS|CAUSE|SCAMPER|LOGIC)$"
+        pattern="^(BMC|LEAN|LEAN_CANVAS|SWOT|PESTEL|PERSONA|PROCESS|CAUSE|SCAMPER|LOGIC|5WHYS|PROS_CONS|DECISION_MATRIX|EISENHOWER|OKR|KPT)$"
     )
     
     language: str = Field(

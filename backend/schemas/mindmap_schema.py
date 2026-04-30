@@ -135,7 +135,7 @@ class MindmapResponse(BaseModel):
     framework_id: str = Field(
         ...,
         description="Framework used for generation",
-        pattern="^(BMC|LEAN|LEAN_CANVAS|SWOT|PESTEL|PERSONA|PROCESS|CAUSE|SCAMPER|LOGIC)$",
+        pattern="^(BMC|LEAN|LEAN_CANVAS|SWOT|PESTEL|PERSONA|PROCESS|CAUSE|SCAMPER|LOGIC|5WHYS|PROS_CONS|DECISION_MATRIX|EISENHOWER|OKR|KPT)$",
         examples=["BMC", "LEAN", "SCAMPER", "LOGIC"]
     )
     

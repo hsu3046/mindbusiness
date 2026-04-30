@@ -10,8 +10,7 @@ import {
 } from '@/types/mindmap'
 import { getFromCache, setToCache, generateCacheKey } from './cache'
 import { getApiHeaders } from './api-key-store'
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { API_BASE_URL } from './api-config'
 
 export async function classifyIntent(userInput: string, language: string = 'Korean'): Promise<ClassificationResponse> {
     // 캐시 체크
@@ -45,23 +44,21 @@ export async function smartClassify(request: SmartClassifyRequest): Promise<Smar
         body: JSON.stringify(request)
     })
 
-    if (!res.ok) {
-        // 에러 응답에서 detail 파싱 시도
-        try {
-            const errorData = await res.json()
-            // FastAPI의 HTTPException detail 구조
-            const detail = errorData.detail
-            if (detail && isAPIError(detail)) {
-                throw { ...detail, isAPIError: true }
-            }
-            throw new Error(detail?.message || `Smart classification failed: ${res.statusText}`)
-        } catch (e) {
-            if ((e as any).isAPIError) throw e
-            throw new Error(`Smart classification failed: ${res.statusText}`)
-        }
+    if (res.ok) return await res.json()
+
+    // Try to parse a FastAPI HTTPException detail; fall back to a plain Error.
+    let errorData: unknown = null
+    try {
+        errorData = await res.json()
+    } catch {
+        throw new Error(`Smart classification failed: ${res.statusText}`)
     }
 
-    return await res.json()
+    const detail = (errorData as { detail?: unknown })?.detail
+    if (isAPIError(detail)) {
+        throw Object.assign(new Error(detail.message), { ...detail, isAPIError: true })
+    }
+    throw new Error(`Smart classification failed: ${res.statusText}`)
 }
 
 export async function generateMindmap(
@@ -118,68 +115,106 @@ export { API_BASE_URL }
 
 /**
  * Generate a professional business report from mindmap data via SSE streaming.
+ *
+ * Returns an `abort` function the caller MUST call when unmounting / closing
+ * the panel to avoid leaked readers and zombie connections. The stream is also
+ * aborted automatically if no chunk arrives within `idleTimeoutMs`.
  */
-export async function generateReport(
+export function generateReport(
     request: ReportRequest,
     onChunk: (text: string) => void,
     onDone: () => void,
-    onError: (error: Error) => void
-): Promise<void> {
-    try {
-        const res = await fetch(`${API_BASE_URL}/api/v1/generate-report`, {
-            method: 'POST',
-            headers: getApiHeaders(),
-            body: JSON.stringify(request)
-        })
+    onError: (error: Error) => void,
+    options?: { idleTimeoutMs?: number }
+): { abort: () => void } {
+    const controller = new AbortController()
+    const idleTimeoutMs = options?.idleTimeoutMs ?? 60_000
+    let idleTimer: ReturnType<typeof setTimeout> | null = null
+    let aborted = false
 
-        if (!res.ok) {
-            throw new Error(`Report generation failed: ${res.statusText}`)
-        }
+    const resetIdleTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => {
+            aborted = true
+            controller.abort()
+            onError(new Error('Report streaming idle timeout'))
+        }, idleTimeoutMs)
+    }
 
-        const reader = res.body?.getReader()
-        if (!reader) throw new Error('No response body')
+    const cleanup = () => {
+        if (idleTimer) clearTimeout(idleTimer)
+        idleTimer = null
+    }
 
-        const decoder = new TextDecoder()
-        let buffer = ''
+    const run = async () => {
+        try {
+            resetIdleTimer()
+            const res = await fetch(`${API_BASE_URL}/api/v1/generate-report`, {
+                method: 'POST',
+                headers: getApiHeaders(),
+                body: JSON.stringify(request),
+                signal: controller.signal,
+            })
 
-        while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
+            if (!res.ok) throw new Error(`Report generation failed: ${res.statusText}`)
 
-            buffer += decoder.decode(value, { stream: true })
+            const reader = res.body?.getReader()
+            if (!reader) throw new Error('No response body')
 
-            // Parse SSE lines
-            const lines = buffer.split('\n')
-            buffer = lines.pop() || '' // Keep incomplete line in buffer
+            const decoder = new TextDecoder()
+            let buffer = ''
 
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                resetIdleTimer()
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue
                     const data = line.slice(6).trim()
 
                     if (data === '[DONE]') {
+                        cleanup()
                         onDone()
                         return
                     }
 
                     try {
                         const parsed = JSON.parse(data)
-                        if (parsed.text) {
-                            onChunk(parsed.text)
-                        }
+                        if (parsed.text) onChunk(parsed.text)
                         if (parsed.error) {
+                            cleanup()
                             onError(new Error(parsed.error))
                             return
                         }
                     } catch {
-                        // Skip malformed JSON
+                        // skip malformed chunk
                     }
                 }
             }
-        }
 
-        onDone()
-    } catch (error) {
-        onError(error instanceof Error ? error : new Error('Unknown error'))
+            cleanup()
+            onDone()
+        } catch (error) {
+            cleanup()
+            if (aborted) return // already surfaced via timeout error
+            if ((error as { name?: string })?.name === 'AbortError') return
+            onError(error instanceof Error ? error : new Error('Unknown error'))
+        }
+    }
+
+    void run()
+
+    return {
+        abort: () => {
+            aborted = true
+            cleanup()
+            controller.abort()
+        },
     }
 }
 

@@ -14,10 +14,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Settings02Icon, CheckmarkCircle02Icon, Alert02Icon, Delete02Icon } from "@hugeicons/core-free-icons"
-import { getApiKey, setApiKey, clearApiKey, getApiHeaders, preloadServerKeyStatus, serverHasKey } from "@/lib/api-key-store"
+import { getApiKey, setApiKey, clearApiKey, preloadServerKeyStatus, serverHasKey, subscribeServerKeyStatus } from "@/lib/api-key-store"
+import { API_BASE_URL } from "@/lib/api-config"
 import { toast } from "sonner"
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 interface ApiKeyDialogProps {
     /** External trigger to open the dialog (e.g., when API call fails) */
@@ -31,11 +30,17 @@ export function ApiKeyDialog({ forceOpen, onOpenChange }: ApiKeyDialogProps) {
     const [savedKey, setSavedKey] = useState<string | null>(null)
     const [isValidating, setIsValidating] = useState(false)
     const [isValid, setIsValid] = useState<boolean | null>(null)
+    const [hasServerKeyState, setHasServerKeyState] = useState(false)
 
     // Load saved key and preload server key status on mount
     useEffect(() => {
         setSavedKey(getApiKey())
+        setHasServerKeyState(serverHasKey())
         preloadServerKeyStatus()
+        const unsubscribe = subscribeServerKeyStatus(() => {
+            setHasServerKeyState(serverHasKey())
+        })
+        return unsubscribe
     }, [])
 
     // Handle external force open
@@ -103,7 +108,7 @@ export function ApiKeyDialog({ forceOpen, onOpenChange }: ApiKeyDialogProps) {
         ? `${savedKey.slice(0, 6)}${"•".repeat(20)}${savedKey.slice(-4)}`
         : null
 
-    const needsKey = !savedKey && !serverHasKey()
+    const needsKey = !savedKey && !hasServerKeyState
 
     return (
         <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -162,7 +167,7 @@ export function ApiKeyDialog({ forceOpen, onOpenChange }: ApiKeyDialogProps) {
 
                 <div className="space-y-4">
                     {/* Server key status */}
-                    {serverHasKey() && (
+                    {hasServerKeyState && (
                         <div className="flex items-center gap-2 text-xs text-slate-400">
                             <HugeiconsIcon icon={CheckmarkCircle02Icon} size={14} />
                             <span>서버에 기본 API 키가 설정되어 있습니다. 개인 키를 설정하면 우선 사용됩니다.</span>
@@ -196,7 +201,7 @@ export function ApiKeyDialog({ forceOpen, onOpenChange }: ApiKeyDialogProps) {
                             onKeyDown={(e: React.KeyboardEvent) => {
                                 if (e.key === 'Enter') validateKey()
                             }}
-                            className="flex-1 text-sm font-mono"
+                            className="flex-1 text-base font-mono"
                         />
                         <Button
                             onClick={validateKey}

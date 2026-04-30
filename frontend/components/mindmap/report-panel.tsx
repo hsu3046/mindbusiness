@@ -35,6 +35,11 @@ export function ReportPanel({
     const [isDone, setIsDone] = useState(false)
     const contentRef = useRef<HTMLDivElement>(null)
 
+    // Active SSE controller — abort on close/unmount/regenerate
+    const activeStreamRef = useRef<{ abort: () => void } | null>(null)
+    // Strict-mode guard — prevent double generate on remount during dev
+    const inFlightRef = useRef(false)
+
     // Responsive side detection
     const [sheetSide, setSheetSide] = useState<"right" | "bottom">("right")
 
@@ -54,8 +59,12 @@ export function ReportPanel({
         }
     }, [markdown, isGenerating])
 
-    const handleGenerate = useCallback(async () => {
+    const handleGenerate = useCallback(() => {
         if (!rootNode) return
+        // Abort any in-flight stream before starting a new one (e.g., regenerate)
+        activeStreamRef.current?.abort()
+        activeStreamRef.current = null
+        inFlightRef.current = true
 
         setMarkdown("")
         setIsGenerating(true)
@@ -68,34 +77,54 @@ export function ReportPanel({
             language: "Korean",
         }
 
-        await generateReport(
+        activeStreamRef.current = generateReport(
             request,
             (chunk) => {
                 setMarkdown((prev) => prev + chunk)
             },
             () => {
+                inFlightRef.current = false
+                activeStreamRef.current = null
                 setIsGenerating(false)
                 setIsDone(true)
             },
             (error) => {
+                inFlightRef.current = false
+                activeStreamRef.current = null
                 setIsGenerating(false)
                 setMarkdown((prev) => prev + `\n\n---\n\n⚠️ 오류 발생: ${error.message}`)
             }
         )
     }, [rootNode, topic, frameworkId])
 
-    // Auto-generate when panel opens
+    // Auto-generate when panel opens (strict-mode safe via inFlightRef).
+    // handleGenerate is intentionally invoked from the effect: it kicks off
+    // an async network stream (not synchronous setState during render).
     useEffect(() => {
-        if (open && !isGenerating && !isDone && !markdown) {
+        if (open && !inFlightRef.current && !isDone && !markdown) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             handleGenerate()
         }
-    }, [open, isGenerating, isDone, markdown, handleGenerate])
+    }, [open, isDone, markdown, handleGenerate])
+
+    // Cleanup on unmount — kill any active stream
+    useEffect(() => {
+        return () => {
+            activeStreamRef.current?.abort()
+            activeStreamRef.current = null
+            inFlightRef.current = false
+        }
+    }, [])
 
     // Reset state when panel closes
     const handleOpenChange = (newOpen: boolean) => {
         if (!newOpen) {
+            activeStreamRef.current?.abort()
+            activeStreamRef.current = null
+            inFlightRef.current = false
             setMarkdown("")
             setIsDone(false)
+            setIsGenerating(false)
         }
         onOpenChange(newOpen)
     }

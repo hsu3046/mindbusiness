@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { MindmapNode } from '@/types/mindmap'
+import { saveTree } from '@/lib/tree-cache'
 
 type ViewMode = 'card' | 'tree' | 'mindmap'
 
@@ -16,6 +17,8 @@ interface MindmapStore {
     currentNode: MindmapNode | null
     nodeHistory: MindmapNode[]
     contextPath: string[]
+    /** Topic key used to persist the tree to tree-cache. Set when the map page mounts. */
+    topic: string | null
 
     // Delete/Undo State
     deletedNodeBackup: DeletedNodeBackup | null
@@ -27,6 +30,7 @@ interface MindmapStore {
     isLoading: boolean
 
     // Actions
+    setTopic: (topic: string | null) => void
     setRootNode: (node: MindmapNode) => void
     setCurrentNode: (node: MindmapNode) => void
     navigateTo: (node: MindmapNode) => void
@@ -51,6 +55,7 @@ const initialState = {
     currentNode: null,
     nodeHistory: [],
     contextPath: [],
+    topic: null as string | null,
     deletedNodeBackup: null as DeletedNodeBackup | null,
     viewMode: 'mindmap' as ViewMode,
     expandingNodeId: null,
@@ -58,15 +63,30 @@ const initialState = {
     isLoading: false,
 }
 
+/** Internal: persist the current root tree to localStorage if a topic is set. */
+function persistTree(topic: string | null, rootNode: MindmapNode | null) {
+    if (!topic || !rootNode) return
+    try {
+        saveTree(topic, rootNode)
+    } catch {
+        // saveTree already logs; swallow to keep store mutations resilient
+    }
+}
+
 export const useMindmapStore = create<MindmapStore>((set, get) => ({
     ...initialState,
 
-    setRootNode: (node) => set({
-        rootNode: node,
-        currentNode: node,
-        nodeHistory: [],
-        contextPath: []
-    }),
+    setTopic: (topic) => set({ topic }),
+
+    setRootNode: (node) => {
+        set({
+            rootNode: node,
+            currentNode: node,
+            nodeHistory: [],
+            contextPath: []
+        })
+        persistTree(get().topic, node)
+    },
 
     setCurrentNode: (node) => set({ currentNode: node }),
 
@@ -135,7 +155,7 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
     setLoading: (loading) => set({ isLoading: loading }),
 
     expandNode: (nodeId, children) => {
-        const { rootNode, currentNode } = get()
+        const { rootNode, currentNode, topic } = get()
         if (!rootNode || !currentNode) return
 
         // Recursively update node with children
@@ -157,14 +177,16 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
             currentNode: updatedCurrent,
             expandingNodeId: null
         })
+        persistTree(topic, updatedRoot)
     },
 
     addChildNode: (parentId) => {
-        const { rootNode, currentNode } = get()
+        const { rootNode, currentNode, topic } = get()
         if (!rootNode) return null
 
         // 새 노드 ID 생성 (UUID 형식)
-        const newNodeId = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        const randomPart = Math.random().toString(36).slice(2, 11)
+        const newNodeId = `node-${Date.now()}-${randomPart}`
 
         // 새 노드 객체 생성 (빈 라벨)
         const newNode: MindmapNode = {
@@ -197,12 +219,13 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
             currentNode: updatedCurrent,
             editingNodeId: newNodeId  // 새 노드를 편집 모드로 설정
         })
+        persistTree(topic, updatedRoot)
 
         return newNode
     },
 
     updateNodeLabel: (nodeId, label) => {
-        const { rootNode, currentNode } = get()
+        const { rootNode, currentNode, topic } = get()
         if (!rootNode) return
 
         const updateLabel = (node: MindmapNode): MindmapNode => {
@@ -224,10 +247,11 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
             currentNode: updatedCurrent,
             editingNodeId: null  // 편집 모드 해제
         })
+        persistTree(topic, updatedRoot)
     },
 
     deleteNode: (nodeId) => {
-        const { rootNode, currentNode } = get()
+        const { rootNode, currentNode, topic } = get()
         if (!rootNode) return false
 
         // Root 노드는 삭제 불가
@@ -275,12 +299,13 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
                 index: nodeIndex
             }
         })
+        persistTree(topic, updatedRoot)
 
         return true
     },
 
     undoDelete: () => {
-        const { rootNode, deletedNodeBackup } = get()
+        const { rootNode, deletedNodeBackup, topic } = get()
         if (!rootNode || !deletedNodeBackup) return false
 
         const { node, parentId, index } = deletedNodeBackup
@@ -310,6 +335,7 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
             currentNode: restoredRoot,
             deletedNodeBackup: null
         })
+        persistTree(topic, restoredRoot)
 
         return true
     },

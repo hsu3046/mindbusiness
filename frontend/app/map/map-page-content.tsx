@@ -71,6 +71,7 @@ export default function MapPageContent() {
         expandingNodeId,
         isLoading,
         setRootNode,
+        setTopic,
         navigateTo,
         setExpanding,
         setLoading,
@@ -78,6 +79,11 @@ export default function MapPageContent() {
     } = useMindmapStore()
 
     const [reportOpen, setReportOpen] = useState(false)
+
+    // Bind topic to store so mutations persist to tree-cache automatically.
+    useEffect(() => {
+        setTopic(topic || null)
+    }, [topic, setTopic])
 
     // Initial Load: L1 노드 표시 (Backend에서 받은 l1_labels 우선 사용)
     useEffect(() => {

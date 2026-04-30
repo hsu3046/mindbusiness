@@ -24,6 +24,7 @@ from schemas.expand_schema import ExpandRequest
 from schemas.conversation import SmartClassifyRequest
 from schemas.report_schema import ReportRequest
 from config import VERCEL_SAFE_TIMEOUT, GEMINI_API_KEY
+from jobs import router as jobs_router
 from typing import Optional
 
 
@@ -82,6 +83,11 @@ smartClassifier = SmartClassifier()
 generator = MindmapGenerator()
 expander = NodeExpander()
 reportGenerator = ReportGenerator()
+
+# Mount async job endpoints (Fire-and-Poll for /generate, resumable SSE for
+# /report). These live under /api/v1/jobs/* and are decoupled from this
+# file's request lifecycle — see api/jobs.py.
+app.include_router(jobs_router)
 
 
 @app.get("/health")

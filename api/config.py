@@ -129,12 +129,16 @@ SUPPORTED_LANGUAGES = ["Korean", "English", "Japanese"]
 # Confidence Threshold
 CONFIDENCE_THRESHOLD = 80  # Score >= 80: Direct selection, < 80: Clarification needed
 
-# === Timeout Settings (for Vercel Pro 60s limit) ===
-GEMINI_TIMEOUT_CLASSIFIER = 25.0   # Classification (조정: 30 → 25초)
-GEMINI_TIMEOUT_GENERATOR = 35.0    # Full mindmap generation (조정: 45 → 35초)
-GEMINI_TIMEOUT_EXPANDER = 25.0     # Single node expansion (조정: 30 → 25초)
+# === Timeout Settings ===
+# Vercel Fluid Compute default = 300s for all plans; Pro can raise to 800s.
+# vercel.json sets maxDuration: 300, so we keep a buffer below that for the
+# synchronous endpoints. Job-queue endpoints (/api/v1/jobs/*) return in <1s
+# and are NOT bound by these — see api/jobs.py for those.
+GEMINI_TIMEOUT_CLASSIFIER = 25.0   # Classification (one-shot UX)
+GEMINI_TIMEOUT_GENERATOR = 35.0    # Full mindmap generation (legacy sync path)
+GEMINI_TIMEOUT_EXPANDER = 25.0     # Single node expansion
 DEFAULT_GEMINI_TIMEOUT = 25.0      # Fallback timeout
-VERCEL_SAFE_TIMEOUT = 55.0         # Vercel 60초 - 5초 버퍼
+VERCEL_SAFE_TIMEOUT = 280.0        # vercel.json maxDuration 300s minus 20s buffer
 
 # === Intent Mode → Framework Mapping ===
 # 사용자가 선택한 Intent Mode에 따라 AI가 선택할 수 있는 Framework 후보군

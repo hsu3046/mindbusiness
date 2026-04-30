@@ -448,10 +448,11 @@ async def generate_report(request: Request, body: ReportRequest):
 
 
 if __name__ == "__main__":
+    # Local dev only. Run from repo root: `python api/index.py`
     import uvicorn
     uvicorn.run(
-        "main:app",
+        "index:app",
         host="0.0.0.0",
         port=8000,
-        reload=True
+        reload=True,
     )

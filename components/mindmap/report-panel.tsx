@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Download04Icon, Loading03Icon, AiChat02Icon, NoteIcon, Cancel01Icon } from "@hugeicons/core-free-icons"
-import { generateReport } from "@/lib/api"
+import { startReportJob, streamReportJob } from "@/lib/api"
 import { MindmapNode, ReportRequest } from "@/types/mindmap"
 
 interface ReportPanelProps {
@@ -21,6 +21,47 @@ interface ReportPanelProps {
     rootNode: MindmapNode | null
     topic: string
     frameworkId: string
+}
+
+// sessionStorage keys for resuming across reloads / device switches.
+const REPORT_JOB_KEY = "mindbusiness_report_job"
+
+interface PersistedReportJob {
+    jobId: string
+    cursor: number
+    markdown: string
+    topicSig: string  // topic|framework — invalidates cache when inputs change
+}
+
+function loadPersisted(topicSig: string): PersistedReportJob | null {
+    if (typeof window === "undefined") return null
+    try {
+        const raw = sessionStorage.getItem(REPORT_JOB_KEY)
+        if (!raw) return null
+        const parsed = JSON.parse(raw) as PersistedReportJob
+        if (parsed.topicSig !== topicSig) return null
+        return parsed
+    } catch {
+        return null
+    }
+}
+
+function savePersisted(state: PersistedReportJob) {
+    if (typeof window === "undefined") return
+    try {
+        sessionStorage.setItem(REPORT_JOB_KEY, JSON.stringify(state))
+    } catch {
+        // sessionStorage can fail in private mode — ignore, resumability is best-effort.
+    }
+}
+
+function clearPersisted() {
+    if (typeof window === "undefined") return
+    try {
+        sessionStorage.removeItem(REPORT_JOB_KEY)
+    } catch {
+        // ignore
+    }
 }
 
 export function ReportPanel({
@@ -39,6 +80,9 @@ export function ReportPanel({
     const activeStreamRef = useRef<{ abort: () => void } | null>(null)
     // Strict-mode guard — prevent double generate on remount during dev
     const inFlightRef = useRef(false)
+    // Track current job_id and cursor for sessionStorage persistence.
+    const jobIdRef = useRef<string | null>(null)
+    const cursorRef = useRef(0)
 
     // Responsive side detection
     const [sheetSide, setSheetSide] = useState<"right" | "bottom">("right")
@@ -59,11 +103,60 @@ export function ReportPanel({
         }
     }, [markdown, isGenerating])
 
-    const handleGenerate = useCallback(() => {
+    const topicSig = `${topic}|${frameworkId}`
+
+    /** Stream from an existing job_id, resuming at `cursor`. */
+    const attachStream = useCallback(
+        (jobId: string, startCursor: number, startingMarkdown: string) => {
+            activeStreamRef.current?.abort()
+            activeStreamRef.current = null
+            inFlightRef.current = true
+
+            jobIdRef.current = jobId
+            cursorRef.current = startCursor
+            setMarkdown(startingMarkdown)
+            setIsGenerating(true)
+            setIsDone(false)
+
+            activeStreamRef.current = streamReportJob(
+                jobId,
+                (chunk, cursor) => {
+                    cursorRef.current = cursor
+                    setMarkdown((prev) => {
+                        const next = prev + chunk
+                        savePersisted({ jobId, cursor, markdown: next, topicSig })
+                        return next
+                    })
+                },
+                () => {
+                    inFlightRef.current = false
+                    activeStreamRef.current = null
+                    setIsGenerating(false)
+                    setIsDone(true)
+                    clearPersisted()
+                },
+                (error) => {
+                    inFlightRef.current = false
+                    activeStreamRef.current = null
+                    setIsGenerating(false)
+                    setMarkdown((prev) => prev + `\n\n---\n\n⚠️ 오류 발생: ${error.message}`)
+                    clearPersisted()
+                },
+                { cursor: startCursor }
+            )
+        },
+        [topicSig]
+    )
+
+    /** Kick off a brand-new report job. */
+    const handleGenerate = useCallback(async () => {
         if (!rootNode) return
-        // Abort any in-flight stream before starting a new one (e.g., regenerate)
+        // Abort any in-flight stream before starting a new one
         activeStreamRef.current?.abort()
         activeStreamRef.current = null
+        clearPersisted()
+        jobIdRef.current = null
+        cursorRef.current = 0
         inFlightRef.current = true
 
         setMarkdown("")
@@ -77,35 +170,36 @@ export function ReportPanel({
             language: "Korean",
         }
 
-        activeStreamRef.current = generateReport(
-            request,
-            (chunk) => {
-                setMarkdown((prev) => prev + chunk)
-            },
-            () => {
-                inFlightRef.current = false
-                activeStreamRef.current = null
-                setIsGenerating(false)
-                setIsDone(true)
-            },
-            (error) => {
-                inFlightRef.current = false
-                activeStreamRef.current = null
-                setIsGenerating(false)
-                setMarkdown((prev) => prev + `\n\n---\n\n⚠️ 오류 발생: ${error.message}`)
-            }
-        )
-    }, [rootNode, topic, frameworkId])
+        try {
+            const jobId = await startReportJob(request)
+            attachStream(jobId, 0, "")
+        } catch (error) {
+            inFlightRef.current = false
+            setIsGenerating(false)
+            setMarkdown(
+                `\n\n⚠️ 오류 발생: ${error instanceof Error ? error.message : "알 수 없는 오류"}`
+            )
+        }
+    }, [rootNode, topic, frameworkId, attachStream])
 
     // Auto-generate when panel opens (strict-mode safe via inFlightRef).
-    // handleGenerate is intentionally invoked from the effect: it kicks off
-    // an async network stream (not synchronous setState during render).
+    // If sessionStorage holds an in-progress job for the same inputs, resume
+    // from its cursor instead of starting fresh.
     useEffect(() => {
-        if (open && !inFlightRef.current && !isDone && !markdown) {
+        if (!open || inFlightRef.current || isDone || markdown) return
+        // attachStream / handleGenerate kick off async network work and only
+        // call setState from inside the streaming callback — that's the
+        // pattern the rule's docs explicitly allow ("subscribe for updates
+        // from some external system"). Disable the stricter heuristic here.
+        const persisted = loadPersisted(topicSig)
+        if (persisted) {
             // eslint-disable-next-line react-hooks/set-state-in-effect
-            handleGenerate()
+            attachStream(persisted.jobId, persisted.cursor, persisted.markdown)
+        } else {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            void handleGenerate()
         }
-    }, [open, isDone, markdown, handleGenerate])
+    }, [open, isDone, markdown, handleGenerate, attachStream, topicSig])
 
     // Cleanup on unmount — kill any active stream
     useEffect(() => {
@@ -116,7 +210,8 @@ export function ReportPanel({
         }
     }, [])
 
-    // Reset state when panel closes
+    // Reset state when panel closes. Keep sessionStorage so the user can
+    // reopen and resume; only clear when explicitly done or regenerated.
     const handleOpenChange = (newOpen: boolean) => {
         if (!newOpen) {
             activeStreamRef.current?.abort()

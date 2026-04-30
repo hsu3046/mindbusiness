@@ -1,33 +1,24 @@
 /**
  * Single source of truth for the backend API base URL.
- * Reads NEXT_PUBLIC_API_URL at build time. In production builds the
- * env var must be set — otherwise the user's browser would silently
- * call localhost. In development we fall back to localhost:8000.
+ *
+ * Default deployment is same-origin (Vercel monorepo: Next.js + Python
+ * serverless functions in the same project). The frontend just calls
+ * `/api/v1/...` and Vercel rewrites it to the Python function.
+ *
+ * For split deployments (frontend on one host, backend on another) set
+ * NEXT_PUBLIC_API_URL to the absolute backend URL.
  */
-
-const FALLBACK_DEV_URL = 'http://localhost:8000'
 
 function resolveApiBaseUrl(): string {
     const envUrl = process.env.NEXT_PUBLIC_API_URL
     if (envUrl && envUrl.length > 0) return envUrl.replace(/\/+$/, '')
-
-    if (process.env.NODE_ENV === 'production') {
-        if (typeof window !== 'undefined') {
-            console.error(
-                '[MindBusiness] NEXT_PUBLIC_API_URL is not set. ' +
-                    'The app cannot reach the backend. Configure this env var in your deployment.'
-            )
-        }
-        // Return empty string so requests fail fast with a clear network error
-        // instead of silently hitting localhost from the user's browser.
-        return ''
-    }
-
-    return FALLBACK_DEV_URL
+    // Empty string → fetch('/api/...') resolves against the page origin.
+    return ''
 }
 
 export const API_BASE_URL = resolveApiBaseUrl()
 
 export function isApiConfigured(): boolean {
-    return API_BASE_URL.length > 0
+    // Same-origin (empty base) is a valid configuration.
+    return true
 }

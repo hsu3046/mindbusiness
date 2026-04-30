@@ -217,7 +217,6 @@ export function HeroInput({ topic, onTopicChange, onSubmit, intentMode, onIntent
                     }`}>
                     <textarea
                         ref={textareaRef}
-                        autoFocus
                         placeholder=""
                         className="w-full min-h-[130px] md:min-h-[150px] max-h-[320px] resize-none overflow-y-auto bg-transparent px-5 py-4 md:px-8 md:py-6 text-lg md:text-xl text-slate-800 placeholder:text-slate-300 focus:outline-none"
                         value={topic}

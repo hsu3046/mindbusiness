@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     ReactFlow,
     Node,
@@ -135,7 +135,7 @@ interface CustomNodeData {
     [key: string]: unknown
 }
 
-function MindmapNodeComponent({ data }: { data: CustomNodeData }) {
+const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data: CustomNodeData }) {
     const style = getLevelStyle(data.level)
     const isRoot = data.level === 0
 
@@ -248,12 +248,19 @@ function MindmapNodeComponent({ data }: { data: CustomNodeData }) {
                     {/* Node Content */}
                     <div className="flex flex-col items-center">
                         {data.isEditing ? (
-                            // 인라인 편집 모드
+                            // 인라인 편집 모드 — autoFocus 대신 ref + 데스크톱에서만 focus (iOS 줌 방지)
                             <input
                                 type="text"
-                                autoFocus
+                                ref={(el) => {
+                                    if (!el) return
+                                    // Avoid mobile auto-zoom: only focus on hover-capable (desktop) devices
+                                    if (typeof window !== 'undefined' && window.matchMedia?.('(hover: hover)').matches) {
+                                        el.focus()
+                                        el.select()
+                                    }
+                                }}
                                 placeholder="노드 이름 입력..."
-                                className="nodrag px-2 py-1 text-sm font-semibold bg-white border border-indigo-400 rounded outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 min-w-[100px]"
+                                className="nodrag px-2 py-1 text-base font-semibold bg-white border border-indigo-400 rounded outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 min-w-[100px]"
                                 onKeyDown={(e) => {
                                     if (e.key === 'Enter') {
                                         const value = (e.target as HTMLInputElement).value.trim()
@@ -297,10 +304,10 @@ function MindmapNodeComponent({ data }: { data: CustomNodeData }) {
                         className="!opacity-0 !w-1 !h-1"
                     />
                 </div>
-            </NodeStatusIndicator >
-        </div >
+            </NodeStatusIndicator>
+        </div>
     )
-}
+})
 
 const nodeTypes = {
     mindmap: MindmapNodeComponent,
@@ -363,6 +370,10 @@ function MindmapCanvasInner({
         }
     }, [])
 
+    // ─── Progressive Disclosure State ───
+    // L1 노드 ID들 중 자식이 revealed된 것들 (declared first so callbacks below can capture)
+    const [revealedParentIds, setRevealedParentIds] = useState<Set<string>>(new Set())
+
     // 수동 자식 노드 추가 핸들러
     const handleAddChild = useCallback((parentId: string) => {
         const newNode = addChildNode(parentId)
@@ -375,10 +386,6 @@ function MindmapCanvasInner({
             })
         }
     }, [addChildNode])
-
-    // ─── Progressive Disclosure State ───
-    // L1 노드 ID들 중 자식이 revealed된 것들
-    const [revealedParentIds, setRevealedParentIds] = useState<Set<string>>(new Set())
 
     // 자식 노드 reveal 토글 핸들러
     const handleRevealChildren = useCallback((parentId: string) => {
@@ -418,7 +425,6 @@ function MindmapCanvasInner({
         const enhancedNodes = result.nodes.map((node: Node) => {
             const nodeData = node.data as CustomNodeData
             const nodeId = nodeData.node.id
-            const level = nodeData.level
 
             return {
                 ...node,
@@ -476,28 +482,48 @@ function MindmapCanvasInner({
     const [nodes, setNodes, onNodesChange] = useNodesState(visibleNodes)
     const [edges, setEdges, onEdgesChange] = useEdgesState(visibleEdges)
 
-    // visibleNodes/visibleEdges 변경 시 업데이트
+    // Track which nodes/edges set we last synced from to avoid clobbering
+    // user-side changes (drag positions) on every parent re-render. We only
+    // re-sync when the visibleNodes/Edges array identity changes, which the
+    // upstream useMemo guarantees only happens on real content changes.
+    const lastSyncedNodesRef = useRef(visibleNodes)
+    const lastSyncedEdgesRef = useRef(visibleEdges)
     useEffect(() => {
-        setNodes(visibleNodes)
-        setEdges(visibleEdges)
+        if (lastSyncedNodesRef.current !== visibleNodes) {
+            lastSyncedNodesRef.current = visibleNodes
+            setNodes(visibleNodes)
+        }
+        if (lastSyncedEdgesRef.current !== visibleEdges) {
+            lastSyncedEdgesRef.current = visibleEdges
+            setEdges(visibleEdges)
+        }
     }, [visibleNodes, visibleEdges, setNodes, setEdges])
 
 
-    // 초기 fitView
+    // 초기 fitView (cleanup-safe)
+    const fitViewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     useEffect(() => {
-        if (!hasFittedView.current && layoutedNodes.length > 0) {
-            setTimeout(() => {
-                fitView({ padding: 0.3, duration: 500 })
-                hasFittedView.current = true
-            }, 100)
+        if (hasFittedView.current || layoutedNodes.length === 0) return
+        if (fitViewTimerRef.current) clearTimeout(fitViewTimerRef.current)
+        fitViewTimerRef.current = setTimeout(() => {
+            fitView({ padding: 0.3, duration: 500 })
+            hasFittedView.current = true
+            fitViewTimerRef.current = null
+        }, 100)
+        return () => {
+            if (fitViewTimerRef.current) {
+                clearTimeout(fitViewTimerRef.current)
+                fitViewTimerRef.current = null
+            }
         }
     }, [layoutedNodes, fitView])
 
-    // 노드 클릭 핸들러
+    // 노드 클릭 핸들러 (스트리밍 중 차단)
     const handleNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+        if (expanding) return
         const mindmapNode = node.data.node as MindmapNode
         onNodeSelect?.(mindmapNode)
-    }, [onNodeSelect])
+    }, [onNodeSelect, expanding])
 
     return (
         <div className="relative w-full h-full min-h-screen bg-slate-50">
@@ -521,6 +547,7 @@ function MindmapCanvasInner({
                     onEdgesChange={onEdgesChange}
                     onNodeClick={handleNodeClick}
                     nodeTypes={nodeTypes}
+                    nodesDraggable={!expanding}
                     fitViewOptions={{ padding: 0.3 }}
                     attributionPosition="bottom-left"
                     minZoom={0.2}
@@ -535,9 +562,11 @@ function MindmapCanvasInner({
                                     hasFittedView.current = false
                                     setNodes(layoutedNodes)
                                     setEdges(layoutedEdges)
-                                    setTimeout(() => {
+                                    if (fitViewTimerRef.current) clearTimeout(fitViewTimerRef.current)
+                                    fitViewTimerRef.current = setTimeout(() => {
                                         fitView({ padding: 0.3, duration: 500 })
                                         hasFittedView.current = true
+                                        fitViewTimerRef.current = null
                                     }, 100)
                                 }}
                                 className="flex items-center gap-2 px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 rounded-lg shadow-md border border-slate-200 transition-colors"
@@ -584,7 +613,7 @@ function MindmapCanvasInner({
                         <Panel position="bottom-center" className="bg-slate-800 text-white px-4 py-3 rounded-lg shadow-lg">
                             <div className="flex items-center gap-4">
                                 <span className="text-sm">
-                                    "{deletedNodeBackup.node.label}" 삭제됨
+                                    &ldquo;{deletedNodeBackup.node.label}&rdquo; 삭제됨
                                 </span>
                                 <button
                                     onClick={handleUndo}

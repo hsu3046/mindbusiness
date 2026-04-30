@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { smartClassify } from "@/lib/api"
@@ -32,6 +32,12 @@ export default function HomePage() {
 
     // Refined Summary: AI가 누적 정보를 기반으로 생성한 정제된 타이틀
     const [refinedSummary, setRefinedSummary] = useState<string>("")
+
+    // Track pending navigation timeout so we can cancel on unmount.
+    const pendingNavTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    useEffect(() => () => {
+        if (pendingNavTimer.current) clearTimeout(pendingNavTimer.current)
+    }, [])
 
     // 로딩 시 명언 랜덤 전환
     useEffect(() => {
@@ -100,7 +106,9 @@ export default function HomePage() {
                 // Auto Fill-in 메시지 표시 후 생성
                 setFillInMessage(result.fill_in_message || "마인드맵을 작성 중입니다...")
                 setStep("generating")
-                setTimeout(() => {
+                if (pendingNavTimer.current) clearTimeout(pendingNavTimer.current)
+                pendingNavTimer.current = setTimeout(() => {
+                    pendingNavTimer.current = null
                     const framework = result.selected_framework_id || "LEAN"
                     router.push(`/map?topic=${encodeURIComponent(finalSummary)}&framework=${framework}&intent=${intentMode}`)
                 }, 1500)
@@ -214,7 +222,6 @@ export default function HomePage() {
                             <div className="w-full max-w-lg md:max-w-xl">
                                 <div className="group relative overflow-hidden rounded-2xl md:rounded-3xl bg-white/70 backdrop-blur-sm p-1 md:p-2 shadow-[0_8px_30px_rgb(0,0,0,0.04)] ring-1 ring-slate-200 transition-all hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:ring-slate-300">
                                     <textarea
-                                        autoFocus
                                         className="w-full min-h-[130px] md:min-h-[150px] resize-none overflow-hidden bg-transparent px-5 py-4 md:px-8 md:py-6 text-lg md:text-xl text-slate-800 placeholder:text-slate-300 focus:outline-none"
                                         placeholder=""
                                         value={topic}
@@ -277,7 +284,7 @@ export default function HomePage() {
                             </div>
                             <div className="text-center space-y-1">
                                 <p className="text-slate-600 italic break-keep text-balance">
-                                    "{loadingQuote.text}"
+                                    &ldquo;{loadingQuote.text}&rdquo;
                                 </p>
                                 <p className="text-sm text-slate-400">
                                     — {loadingQuote.author}

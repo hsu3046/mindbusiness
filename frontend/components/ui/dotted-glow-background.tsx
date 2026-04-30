@@ -207,7 +207,8 @@ export const DottedGlowBackground = ({
 
     const draw = (now: number) => {
       if (stopped) return;
-      const dt = (now - last) / 1000; // seconds
+      // dt was reserved for time-based animation; keep `last` updated for parity
+      // with future motion logic without computing the unused delta.
       last = now;
       const { width, height } = container.getBoundingClientRect();
 

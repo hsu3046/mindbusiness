@@ -36,7 +36,6 @@ export function saveTree(topic: string, rootNode: MindmapNode): void {
             lastUpdated: Date.now()
         }
         localStorage.setItem(key, JSON.stringify(entry))
-        console.log('🌳 [Tree SAVED]', topic)
     } catch (e) {
         console.warn('Tree cache save failed:', e)
     }
@@ -54,7 +53,6 @@ export function loadTree(topic: string): MindmapNode | null {
         if (!stored) return null
 
         const entry: TreeCacheEntry = JSON.parse(stored)
-        console.log('🌳 [Tree LOADED]', topic)
         return entry.rootNode
     } catch (e) {
         console.warn('Tree cache load failed:', e)
@@ -70,7 +68,6 @@ export function clearTree(topic: string): void {
 
     const key = TREE_CACHE_PREFIX + hashTopic(topic)
     localStorage.removeItem(key)
-    console.log('🗑️ [Tree CLEARED]', topic)
 }
 
 /**
@@ -87,7 +84,6 @@ export function clearAllTrees(): void {
         }
     }
     keysToRemove.forEach(key => localStorage.removeItem(key))
-    console.log('🗑️ [All Trees CLEARED]', keysToRemove.length, 'items')
 }
 
 /**

@@ -118,7 +118,7 @@ function toTreeNode(node: MindmapNode, level: number = 1): TreeNode {
 export function calculateD3Layout(
     rootNode: MindmapNode,
     onExpand: (node: MindmapNode) => void,
-    expectedL2Counts?: Record<string, number>
+    _expectedL2Counts?: Record<string, number>
 ): LayoutResult {
     const nodes: Node[] = []
     const edges: Edge[] = []
@@ -227,10 +227,10 @@ export function calculateD3Layout(
 
     // ─── Step 5: Create edges ───
     // Root to L1 edges
-    rightChildren.forEach((child, idx) => {
+    rightChildren.forEach((child) => {
         edges.push(createEdge(rootNode.id, child.id, 'right'))
     })
-    leftChildren.forEach((child, idx) => {
+    leftChildren.forEach((child) => {
         edges.push(createEdge(rootNode.id, child.id, 'left'))
     })
 

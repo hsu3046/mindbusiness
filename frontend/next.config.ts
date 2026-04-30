@@ -1,7 +1,16 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from "next"
 
 const nextConfig: NextConfig = {
-  /* config options here */
-};
+    reactStrictMode: true,
+    poweredByHeader: false,
+    experimental: {
+        // Trim icon/animation libraries from the client bundle.
+        optimizePackageImports: [
+            "lucide-react",
+            "@hugeicons/react",
+            "framer-motion",
+        ],
+    },
+}
 
-export default nextConfig;
+export default nextConfig

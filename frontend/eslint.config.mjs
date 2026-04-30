@@ -5,9 +5,15 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  // Project-wide rule overrides
+  {
+    rules: {
+      "react-hooks/exhaustive-deps": "error",
+      "no-console": ["warn", { allow: ["warn", "error"] }],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
-    // Default ignores of eslint-config-next:
     ".next/**",
     "out/**",
     "build/**",

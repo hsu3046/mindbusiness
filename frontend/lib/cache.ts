@@ -32,7 +32,6 @@ export function getFromCache<T>(key: string): T | null {
             return null
         }
 
-        console.log('🚀 [Cache HIT]', key)
         return entry.data
     } catch {
         return null
@@ -52,7 +51,6 @@ export function setToCache<T>(key: string, data: T, ttlMinutes: number = 60): vo
             ttl: ttlMinutes * 60 * 1000
         }
         localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(entry))
-        console.log('💾 [Cache SET]', key)
     } catch (e) {
         console.warn('Cache storage failed:', e)
     }
@@ -79,7 +77,6 @@ export function clearAllCache(): void {
         }
     }
     keysToRemove.forEach(key => localStorage.removeItem(key))
-    console.log('🗑️ [Cache CLEARED]', keysToRemove.length, 'items')
 }
 
 /**

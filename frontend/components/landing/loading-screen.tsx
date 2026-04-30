@@ -49,7 +49,7 @@ export function LoadingScreen({ topic, loadingQuote }: LoadingScreenProps) {
                         className="text-center space-y-2"
                     >
                         <p className="text-slate-500 italic break-keep text-balance leading-relaxed">
-                            "{loadingQuote.text}"
+                            &ldquo;{loadingQuote.text}&rdquo;
                         </p>
                         <p className="text-sm text-slate-400">
                             — {loadingQuote.author}

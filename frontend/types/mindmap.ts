@@ -9,7 +9,7 @@ export interface MindmapNode {
 
     // Phase 2: Semantic Analysis
     semantic_type?: 'finance' | 'action' | 'risk' | 'persona' | 'resource' | 'metric' | 'other'
-    attributes?: Record<string, any>
+    attributes?: Record<string, unknown>
 
     // Recursive structure
     children: MindmapNode[]

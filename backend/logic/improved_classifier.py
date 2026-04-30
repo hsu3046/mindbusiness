@@ -14,7 +14,7 @@ Improved Intent Classifier - 4단계 판단 프로세스
 
 import re
 import asyncio
-import json
+import logging
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass, asdict
 from collections import defaultdict
@@ -22,8 +22,10 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
-import config
 from config import GEMINI_API_KEY, MODEL_REASONING, get_frameworks_for_intent
+from lib.json_utils import safe_json_parse
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -633,8 +635,8 @@ Respond in JSON format:
             temperature=0.2,
         )
     )
-    
-    return json.loads(response.text)
+
+    return safe_json_parse(response.text)
 
 
 # ============================================================
@@ -646,11 +648,15 @@ class ImprovedIntentClassifier:
     개선된 Intent Classifier - 4단계 판단 프로세스
     - Intent Mode 필터링 지원
     - 신규 6개 Framework 지원
+
+    Stateless: each request resolves its own Gemini client via the
+    `api_key` parameter — never mutates shared instance state.
     """
-    
+
     def __init__(self):
-        self.client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-        
+        # Default client (only used when no per-request key is provided)
+        self._default_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
         # 기존 프롬프트 로드
         prompt_path = Path(__file__).parent.parent / "prompts" / "system_classifier.txt"
         if prompt_path.exists():
@@ -658,13 +664,22 @@ class ImprovedIntentClassifier:
                 self.system_prompt_template = f.read()
         else:
             self.system_prompt_template = ""
-    
+
+    def _get_client(self, api_key: Optional[str] = None):
+        """Resolve a Gemini client for this request without mutating shared state."""
+        if api_key:
+            return genai.Client(api_key=api_key)
+        if self._default_client:
+            return self._default_client
+        raise ValueError("No API key available. Please set your Gemini API key in Settings.")
+
     async def analyze_intent(
         self,
         user_input: str,
         user_language: str = "Korean",
         intent_mode: str = "creation",
-        dna: dict = None
+        dna: Optional[dict] = None,
+        api_key: Optional[str] = None,
     ) -> dict:
         """
         개선된 4단계 판단 프로세스:
@@ -673,72 +688,62 @@ class ImprovedIntentClassifier:
         3. Intent Mode 필터링
         4. LLM Constrained Choice (상위 후보만)
         """
-        
-        print("\n" + "="*60)
-        print("🧠 [IMPROVED CLASSIFIER] 4단계 판단 시작")
-        print(f"   Intent Mode: {intent_mode}")
-        print("="*60)
-        
+        client = self._get_client(api_key)
+
+        logger.info("Improved classifier: intent_mode=%s", intent_mode)
+
         # Intent에 허용된 Framework 목록 가져오기
         available_frameworks = get_frameworks_for_intent(intent_mode)
-        print(f"   허용된 Frameworks: {', '.join(available_frameworks)}")
-        
+        logger.debug("Allowed frameworks: %s", available_frameworks)
+
         # === STEP 1: 키워드 기반 점수화 ===
-        print("\n[STEP 1] 키워드 기반 점수 계산...")
         initial_scores = calculate_framework_scores(
-            user_input, 
-            dna=None, 
+            user_input,
+            dna=None,
             available_frameworks=available_frameworks
         )
-        
+
         valid_scores = {k: v for k, v in initial_scores.items() if v > 0}
-        
+
         if valid_scores:
-            print("   점수:")
-            for fw, score in sorted(valid_scores.items(), key=lambda x: x[1], reverse=True)[:5]:
-                print(f"      - {fw}: {score:.1f}")
+            top_initial = sorted(valid_scores.items(), key=lambda x: x[1], reverse=True)[:5]
+            logger.debug("Initial keyword scores top5: %s", top_initial)
         else:
-            print("   매칭 없음 → AI 전체 위임")
-        
+            logger.debug("No keyword match -> defer to AI")
+
         # === STEP 2: DNA 기반 점수 보정 ===
-        print("\n[STEP 2] DNA 기반 점수 보정...")
-        
         if dna is None:
             dna = {"summary": user_input[:200], "target": "", "edge": "", "objective": ""}
-        
+
         refined_scores = calculate_framework_scores(
-            user_input, 
-            dna=dna, 
+            user_input,
+            dna=dna,
             available_frameworks=available_frameworks
         )
-        
+
         valid_refined = {k: v for k, v in refined_scores.items() if v > 0}
-        
+
         if valid_refined:
-            print("   보정 후 점수:")
-            for fw, score in sorted(valid_refined.items(), key=lambda x: x[1], reverse=True)[:5]:
-                delta = score - initial_scores.get(fw, 0)
-                delta_str = f"(+{delta:.1f})" if delta > 0 else f"({delta:.1f})" if delta < 0 else ""
-                print(f"      - {fw}: {score:.1f} {delta_str}")
-        
+            top_refined = sorted(valid_refined.items(), key=lambda x: x[1], reverse=True)[:5]
+            logger.debug("Refined scores top5: %s", top_refined)
+
         # === STEP 3: 상위 후보 추출 ===
-        print("\n[STEP 3] 상위 후보 추출...")
         candidates = get_top_candidates(refined_scores, top_n=3, min_score=2.0)
-        
+
         if not candidates:
-            print("   후보 없음 → AI 전체 위임")
-            return await self._fallback_to_full_ai(user_input, user_language, available_frameworks)
-        
-        candidate_ids = [fw for fw, score in candidates]
-        print(f"   후보: {', '.join(candidate_ids)}")
-        
+            logger.debug("No candidates -> full AI fallback")
+            return await self._fallback_to_full_ai(client, user_input, user_language, available_frameworks)
+
+        candidate_ids = [fw for fw, _ in candidates]
+        logger.debug("Top candidates: %s", candidate_ids)
+
         # 단일 후보면 즉시 확정
         if len(candidates) == 1:
             selected = candidates[0][0]
-            print(f"\n✅ 단일 후보 확정: {selected}")
-            
+            logger.info("Single candidate confirmed: %s", selected)
+
             reasoning = build_structured_reasoning(selected, refined_scores, user_input, dna)
-            
+
             return {
                 "selected_framework_id": selected,
                 "confidence_score": reasoning.confidence,
@@ -747,26 +752,23 @@ class ImprovedIntentClassifier:
                 "context_vector": dna,
                 "source": "keyword+dna"
             }
-        
+
         # === STEP 4: LLM Constrained Choice ===
-        print(f"\n[STEP 4] LLM Constrained Choice ({len(candidate_ids)}개 후보)")
-        
+        logger.info("LLM constrained choice over %d candidates", len(candidate_ids))
+
         llm_result = await llm_constrained_choice(
-            self.client,
+            client,
             user_input,
             candidate_ids,
             dna,
             user_language
         )
-        
+
         selected = llm_result["selected_framework"]
-        print(f"   LLM 선택: {selected}")
-        print(f"   이유: {llm_result['reasoning'][:100]}...")
-        
+        logger.info("LLM picked: %s", selected)
+
         reasoning = build_structured_reasoning(selected, refined_scores, user_input, dna)
-        
-        print("="*60 + "\n")
-        
+
         return {
             "selected_framework_id": selected,
             "confidence_score": reasoning.confidence,
@@ -775,19 +777,20 @@ class ImprovedIntentClassifier:
             "context_vector": dna,
             "source": "hybrid_constrained"
         }
-    
+
     async def _fallback_to_full_ai(
-        self, 
-        user_input: str, 
+        self,
+        client,
+        user_input: str,
         language: str,
         available_frameworks: List[str]
     ) -> dict:
         """키워드 매칭 실패 시 기존 AI 전체 위임"""
-        print("   → 기존 AI 분석 로직 실행")
-        
+        logger.debug("Falling back to full AI selection")
+
         # 제한된 프레임워크 목록으로 프롬프트 생성
         frameworks_list = ", ".join(available_frameworks)
-        
+
         prompt = f"""You are a business framework expert.
 
 Choose the most appropriate framework from: {frameworks_list}
@@ -802,8 +805,8 @@ Respond in JSON:
     "confidence": 70
 }}
 """
-        
-        response = await self.client.aio.models.generate_content(
+
+        response = await client.aio.models.generate_content(
             model=MODEL_REASONING,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -811,9 +814,9 @@ Respond in JSON:
                 temperature=0.1,
             )
         )
-        
-        data = json.loads(response.text)
-        
+
+        data = safe_json_parse(response.text)
+
         return {
             "selected_framework_id": data.get("selected_framework"),
             "confidence_score": data.get("confidence", 70),

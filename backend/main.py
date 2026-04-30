@@ -56,10 +56,17 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configure CORS for Next.js frontend
-# Set ALLOWED_ORIGINS env var for production (comma-separated)
+# Set ALLOWED_ORIGINS env var (comma-separated)
 # Example: ALLOWED_ORIGINS=https://your-app.vercel.app,https://custom-domain.com
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+# Default: localhost dev origins only. Production MUST set ALLOWED_ORIGINS explicitly.
+_default_origins = "http://localhost:3000,http://127.0.0.1:3000"
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",") if o.strip()]
 USE_WILDCARD = ALLOWED_ORIGINS == ["*"]
+if IS_PRODUCTION and (USE_WILDCARD or ALLOWED_ORIGINS == _default_origins.split(",")):
+    logger.warning(
+        "ALLOWED_ORIGINS is wildcard or default in production. "
+        "Set ALLOWED_ORIGINS env var to your frontend domain(s)."
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -84,8 +91,17 @@ async def health_check():
         "status": "ok",
         "service": "MindBusiness AI Backend",
         "version": "1.0.0",
-        "has_server_key": bool(GEMINI_API_KEY)
     }
+
+
+@app.get("/api/v1/byok-status")
+async def byok_status():
+    """
+    Returns whether this deployment has a server-side fallback key.
+    Used by the frontend to decide if BYOK is mandatory.
+    Does not expose the key itself — only the boolean.
+    """
+    return {"has_server_key": bool(GEMINI_API_KEY)}
 
 
 @app.post("/api/v1/validate-key")
@@ -101,15 +117,17 @@ async def validate_api_key(request: Request):
     
     try:
         from google import genai
+        from config import MODEL_GENERATION
         client = genai.Client(api_key=api_key)
-        # Lightweight test: list models
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+        # Lightweight test using the configured generation model
+        await client.aio.models.generate_content(
+            model=MODEL_GENERATION,
             contents="Say 'ok' in one word.",
         )
         return {"valid": True, "message": "API key is valid."}
     except Exception as e:
-        logger.warning(f"API key validation failed: {e}")
+        # Never echo the api_key or raw error message back to the client.
+        logger.warning("API key validation failed: %s", e)
         raise HTTPException(status_code=401, detail="Invalid API key.")
 
 
@@ -158,12 +176,12 @@ async def smart_classify(request: Request, body: SmartClassifyRequest):
             timeout=VERCEL_SAFE_TIMEOUT
         )
         elapsed = time.time() - start_time
-        print(f"⏱️ SmartClassify 완료: {elapsed:.2f}초")
+        logger.info("SmartClassify completed in %.2fs", elapsed)
         return result
-    
+
     except asyncio.TimeoutError:
         elapsed = time.time() - start_time
-        print(f"⚠️ SmartClassify 타임아웃: {elapsed:.2f}초")
+        logger.warning("SmartClassify timeout after %.2fs", elapsed)
         raise HTTPException(
             status_code=408,
             detail={
@@ -206,12 +224,12 @@ async def generate_mindmap(request: Request, body: GenerateRequest):
             timeout=VERCEL_SAFE_TIMEOUT
         )
         elapsed = time.time() - start_time
-        print(f"⏱️ Generate 완료: {elapsed:.2f}초")
+        logger.info("Generate completed in %.2fs", elapsed)
         return result
-    
+
     except asyncio.TimeoutError:
         elapsed = time.time() - start_time
-        print(f"⚠️ Generate 타임아웃: {elapsed:.2f}초")
+        logger.warning("Generate timeout after %.2fs", elapsed)
         raise HTTPException(
             status_code=408,
             detail={
@@ -292,12 +310,12 @@ async def expand_node(request: Request, body: ExpandRequest):
             timeout=VERCEL_SAFE_TIMEOUT
         )
         elapsed = time.time() - start_time
-        print(f"⏱️ Expand 완료: {elapsed:.2f}초")
+        logger.info("Expand completed in %.2fs", elapsed)
         return result
-    
+
     except asyncio.TimeoutError:
         elapsed = time.time() - start_time
-        print(f"⚠️ Expand 타임아웃: {elapsed:.2f}초")
+        logger.warning("Expand timeout after %.2fs", elapsed)
         raise HTTPException(
             status_code=408,
             detail={

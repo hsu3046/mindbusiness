@@ -5,18 +5,20 @@ Also extracts Business DNA (Context Vector) for Generator parallelization.
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 from google import genai
 from google.genai import types
 
-import config
 from config import GEMINI_API_KEY, MODEL_REASONING, get_frameworks_for_intent
 from schemas.intent_schema import FrameworkDecision, MissingInfoType
 from schemas.context_vector import ContextVector
 from logic.dna_sanitizer import sanitize_dna, needs_clarification_for_target
 from lib.json_utils import safe_json_parse
 from lib.text_utils import strip_markdown
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -211,14 +213,8 @@ class IntentClassifier:
 {user_input}
 """
             
-            # === DEBUG LOGGING ===
-            print("\n" + "="*60)
-            print("🧠 [CLASSIFIER] AI 추론 시작")
-            print("="*60)
-            print(f"📝 User Input: {user_input[:100]}{'...' if len(user_input) > 100 else ''}")
-            print(f"🌐 Language: {user_language}")
-            print("-"*60)
-            
+            logger.info("Classifier analyzing intent (lang=%s, input_len=%d)", user_language, len(user_input))
+
             # 3. Call Gemini Pro with JSON Mode
             client = self._get_client(api_key)
             response = await client.aio.models.generate_content(
@@ -229,21 +225,16 @@ class IntentClassifier:
                     temperature=0.1,  # Low temperature for consistent reasoning
                 )
             )
-            
+
             # 4. Parse and validate response
             json_str = response.text
             data = safe_json_parse(json_str)
-            
-            # === DEBUG: AI Response ===
-            print(f"✅ AI Response Received")
-            print(f"   - Framework: {data.get('selected_framework_id', 'N/A')}")
-            print(f"   - Confidence: {data.get('confidence_score', 'N/A')}")
-            print(f"   - Reasoning: {data.get('reasoning_log', 'N/A')[:100]}...")
-            if data.get('context_vector'):
-                cv = data['context_vector']
-                print(f"   - DNA Summary: {cv.get('summary', 'N/A')[:50]}...")
-                print(f"   - DNA Target: {cv.get('target', 'N/A')[:50]}...")
-            print("="*60 + "\n")
+
+            logger.info(
+                "Classifier picked framework=%s (confidence=%s)",
+                data.get("selected_framework_id", "N/A"),
+                data.get("confidence_score", "N/A"),
+            )
             
             # Validate with Pydantic v2
             validated_result = FrameworkDecision.model_validate(data)
@@ -265,12 +256,11 @@ class IntentClassifier:
             return validated_result.model_dump()
         
         except json.JSONDecodeError as e:
-            print(f"JSON parsing error: {e}")
-            print(f"Raw response: {response.text if 'response' in locals() else 'N/A'}")
+            logger.warning("Classifier JSON parse failed: %s", e)
             return self._error_response(user_language, f"JSON Error: {str(e)}")
-        
+
         except Exception as e:
-            print(f"Error in Classifier: {e}")
+            logger.exception("Classifier failed")
             return self._error_response(user_language, str(e))
     
     def _error_response(self, user_language: str, error_detail: str) -> dict:
@@ -366,16 +356,24 @@ class SmartClassifier:
             return self.client
         raise ValueError("No API key available. Please set your Gemini API key in Settings.")
     
-    async def select_framework_improved(self, user_input: str, dna: dict, intent_mode: str, language: str) -> dict:
+    async def select_framework_improved(
+        self,
+        user_input: str,
+        dna: dict,
+        intent_mode: str,
+        language: str,
+        api_key: Optional[str] = None,
+    ) -> dict:
         """
         [NEW] Use ImprovedIntentClassifier for framework selection.
-        
+
         Args:
             user_input: Combined user input
             dna: DNA dict (summary, target, edge, objective)
             intent_mode: Intent mode (creation, diagnosis, choice, strategy)
             language: User language
-        
+            api_key: Optional per-request override for the Gemini client
+
         Returns:
             {
                 'framework_id': str,
@@ -388,9 +386,10 @@ class SmartClassifier:
             user_input=user_input,
             user_language=language,
             intent_mode=intent_mode,
-            dna=dna
+            dna=dna,
+            api_key=api_key,
         )
-        
+
         return {
             'framework_id': result.get('selected_framework_id', 'LEAN'),
             'confidence': result.get('confidence_score', 70),
@@ -415,15 +414,15 @@ class SmartClassifier:
         template_key = f"{framework_id}_{intent_suffix}"
         
         template_data = self.framework_templates.get(template_key)
-        
+
         # Fallback: try creation intent if specific intent not found
         if not template_data and intent_mode != "creation":
             template_key = f"{framework_id}_CREATION"
             template_data = self.framework_templates.get(template_key)
-            print(f"⚠️ L1 Template fallback: {framework_id}_{intent_suffix} → {template_key}")
-        
+            logger.warning("L1 template fallback: %s_%s -> %s", framework_id, intent_suffix, template_key)
+
         if not template_data:
-            print(f"⚠️ L1 Template not found: {template_key}")
+            logger.warning("L1 template not found: %s", template_key)
             return []
         
         # Get language-specific labels
@@ -433,68 +432,61 @@ class SmartClassifier:
     async def smart_classify(self, request, api_key: Optional[str] = None) -> dict:
         """
         3-turn conversation-based classification with DNA collection.
-        
+
         Args:
             request: SmartClassifyRequest with conversation history
-        
+            api_key: Optional per-request Gemini key (BYOK). Never mutates
+                     shared instance state — passed down through helpers.
+
         Returns:
             SmartClassifyResponse as dict
         """
         from schemas.conversation import SmartClassifyResponse
-        
+
+        # Resolve a per-request client. Do NOT mutate self.client — that
+        # would race when concurrent requests use different keys.
+        client = self._get_client(api_key)
+
         try:
-            # Temporarily override client if api_key provided
-            original_client = self.client
-            if api_key:
-                self.client = self._get_client(api_key)
-                self.improved_classifier.client = self.client
-            elif not self.client:
-                self.client = self._get_client()
-                self.improved_classifier.client = self.client
-            
-            # === DEBUG LOGGING ===
-            print("\n" + "="*60)
-            print("🧠 [SMART CLASSIFIER] 분석 시작")
-            print("="*60)
-            print(f"🔄 Turn: {request.turn_number}")
-            print(f"🌐 Language: {request.user_language}")
-            print(f"🎯 Intent Mode: {request.intent_mode}")
-            print("-"*60)
-            
+            logger.info(
+                "SmartClassify start (turn=%s, lang=%s, intent=%s)",
+                request.turn_number, request.user_language, request.intent_mode,
+            )
+
             # 1. Combine all user inputs from history
             all_inputs = self._combine_user_inputs(request)
             input_length = len(all_inputs)
-            print(f"📝 Combined Input ({input_length}자): {all_inputs[:150]}{'...' if input_length > 150 else ''}")
+            logger.debug("Combined input length: %d", input_length)
             
             # === INFER MODE: 첫 입력이 100자 이상이면 질문 없이 Silent Inference ===
             if request.turn_number == 1 and input_length >= 100:
-                print(f"🧠 INFER MODE 활성화 (입력 {input_length}자 >= 100자)")
-                
+                logger.info("INFER MODE activated (input %d chars)", input_length)
+
                 # === STEP 1: 키워드 매칭 먼저 (AI 호출 없음, ~0.05초) ===
                 from logic.improved_classifier import calculate_framework_scores, get_top_candidates
                 from config import get_frameworks_for_intent
-                
+
                 available_frameworks = get_frameworks_for_intent(request.intent_mode)
                 scores = calculate_framework_scores(
-                    all_inputs, 
-                    dna=None, 
+                    all_inputs,
+                    dna=None,
                     available_frameworks=available_frameworks,
-                    intent_mode=request.intent_mode  # [NEW] Intent 가중치
+                    intent_mode=request.intent_mode
                 )
                 candidates = get_top_candidates(
-                    scores, 
-                    top_n=3, 
+                    scores,
+                    top_n=3,
                     min_score=2.0,
-                    input_length=input_length  # [NEW] 길이 보너스
+                    input_length=input_length
                 )
-                
-                print(f"   🔍 키워드 매칭 결과: {candidates if candidates else '없음'}")
-                
+
+                logger.debug("Keyword match candidates: %s", candidates if candidates else "none")
+
                 # 단일 후보 → AI 호출 스킵! (~0.2초)
                 if candidates and len(candidates) == 1:
                     framework = candidates[0][0]
                     score = candidates[0][1]
-                    
+
                     # DNA는 간단하게 생성 (AI 호출 없음)
                     from schemas.context_vector import ContextVector
                     dna = ContextVector(
@@ -503,16 +495,12 @@ class SmartClassifier:
                         edge="",
                         objective=""
                     )
-                    quality_score = 50  # 기본값
-                    
+                    quality_score = 50
+
                     l1_labels = self.get_l1_labels(framework, request.intent_mode, request.user_language)
-                    
-                    print(f"   ✅ 단일 후보 확정! AI 호출 스킵")
-                    print(f"🎯 Framework: {framework} (score: {score:.1f})")
-                    print(f"📋 L1 Labels: {len(l1_labels)}개")
-                    print(f"⚡ 응답 시간: ~0.2초 (AI 스킵)")
-                    print("="*60 + "\n")
-                    
+
+                    logger.info("Single keyword candidate -> framework=%s (score=%.1f), AI skipped", framework, score)
+
                     return SmartClassifyResponse(
                         dna_quality_score=quality_score,
                         context_vector=dna,
@@ -521,26 +509,21 @@ class SmartClassifier:
                         l1_labels=l1_labels,
                         reasoning_log=f"Keyword match: {framework} (score: {score:.1f}). AI skipped for speed."
                     ).model_dump()
-                
+
                 # 다중 후보 또는 매칭 실패 → 기존 AI DNA 추출 사용
-                print("   → 키워드 매칭 불충분, AI DNA 추출 시작...")
-                result = await self._extract_dna_infer(all_inputs, request.user_language, request.intent_mode)
+                logger.debug("Keyword match insufficient, using AI DNA extraction")
+                result = await self._extract_dna_infer(client, all_inputs, request.user_language, request.intent_mode)
                 dna = result["dna"]
                 dna = sanitize_dna(dna, all_inputs)
                 quality_score = self.calculate_dna_quality(dna)
-                
+
                 # 기존 AI가 선택한 Framework 사용 (추가 AI 호출 없음!)
                 framework = result.get("recommended_framework", "LEAN")
-                
+
                 l1_labels = self.get_l1_labels(framework, request.intent_mode, request.user_language)
-                
-                print(f"📊 DNA Score: {quality_score}")
-                print(f"   - Summary: {dna.summary[:80] if dna.summary else 'N/A'}...")
-                print(f"   - Target: {dna.target[:50] if dna.target else 'N/A'}")
-                print(f"🎯 Framework (AI): {framework}")
-                print(f"📋 L1 Labels: {len(l1_labels)}개")
-                print("="*60 + "\n")
-                
+
+                logger.info("INFER mode complete: framework=%s, quality=%d", framework, quality_score)
+
                 return SmartClassifyResponse(
                     dna_quality_score=quality_score,
                     context_vector=dna,
@@ -549,31 +532,25 @@ class SmartClassifier:
                     l1_labels=l1_labels,
                     reasoning_log=f"DNA infer: AI selected {framework}. {result.get('framework_reasoning', '')}"
                 ).model_dump()
-            
+
             # === ONE-SHOT: DNA 추출 + 질문 생성을 단일 AI 호출로 처리 ===
-            print("🔄 One-Shot 모드: DNA + 질문 통합 처리")
-            
+            logger.debug("One-Shot mode: DNA + question combined")
+
             result = await self._extract_dna_and_question(
-                all_inputs, request.conversation_history, request.user_language, request.intent_mode
+                client, all_inputs, request.conversation_history, request.user_language, request.intent_mode
             )
             dna = result["dna"]
-            
+
             # 3. Sanitize DNA
             dna = sanitize_dna(dna, all_inputs)
-            
+
             # 4. Calculate quality score
             quality_score = self.calculate_dna_quality(dna)
-            
-            # === DEBUG: DNA Info ===
-            print(f"\n📊 DNA Quality Score: {quality_score}")
-            print(f"   - Summary: {dna.summary[:80] if dna.summary else 'N/A'}...")
-            print(f"   - Target: {dna.target[:50] if dna.target else 'N/A'}")
-            print(f"   - Edge: {dna.edge[:50] if dna.edge else 'N/A'}")
-            print(f"   - Objective: {dna.objective[:50] if dna.objective else 'N/A'}")
-            
+
+            logger.info("DNA quality=%d", quality_score)
+
             # 5. Decision: Early exit if DNA is sufficient
             if quality_score >= 90:
-                # [NEW] 개선된 Framework 선택 로직 사용
                 dna_dict = {
                     "summary": dna.summary,
                     "target": dna.target,
@@ -581,13 +558,11 @@ class SmartClassifier:
                     "objective": dna.objective
                 }
                 fw_result = await self.select_framework_improved(
-                    all_inputs, dna_dict, request.intent_mode, request.user_language
+                    all_inputs, dna_dict, request.intent_mode, request.user_language, api_key=api_key
                 )
                 framework = fw_result['framework_id']
                 l1_labels = self.get_l1_labels(framework, request.intent_mode, request.user_language)
-                print(f"✅ DNA 충분! Framework (Improved): {framework} [source: {fw_result['source']}]")
-                print(f"📋 L1 Labels: {len(l1_labels)}개")
-                print("="*60 + "\n")
+                logger.info("DNA sufficient: framework=%s [source=%s]", framework, fw_result['source'])
                 return SmartClassifyResponse(
                     dna_quality_score=quality_score,
                     context_vector=dna,
@@ -596,10 +571,9 @@ class SmartClassifier:
                     l1_labels=l1_labels,
                     reasoning_log=f"DNA sufficient. {fw_result['source']} selected {framework}. {fw_result['reasoning']}"
                 ).model_dump()
-            
+
             if request.turn_number >= 3:
                 filled_dna = self._auto_fill_dna(dna, all_inputs)
-                # [NEW] 개선된 Framework 선택 로직 사용
                 dna_dict = {
                     "summary": filled_dna.summary,
                     "target": filled_dna.target,
@@ -607,13 +581,11 @@ class SmartClassifier:
                     "objective": filled_dna.objective
                 }
                 fw_result = await self.select_framework_improved(
-                    all_inputs, dna_dict, request.intent_mode, request.user_language
+                    all_inputs, dna_dict, request.intent_mode, request.user_language, api_key=api_key
                 )
                 framework = fw_result['framework_id']
                 l1_labels = self.get_l1_labels(framework, request.intent_mode, request.user_language)
-                print(f"📋 Turn 3 완료: Auto-fill + Framework (Improved) {framework} [source: {fw_result['source']}]")
-                print(f"📋 L1 Labels: {len(l1_labels)}개")
-                print("="*60 + "\n")
+                logger.info("Turn 3 complete: framework=%s [source=%s]", framework, fw_result['source'])
                 return SmartClassifyResponse(
                     dna_quality_score=quality_score,
                     context_vector=filled_dna,
@@ -623,14 +595,12 @@ class SmartClassifier:
                     l1_labels=l1_labels,
                     reasoning_log=f"Turn 3 complete. {fw_result['source']} selected {framework}."
                 ).model_dump()
-            
+
             # 7. Ask next question (One-Shot에서 이미 생성됨)
             asked_types = self.get_asked_types(request.conversation_history)
             next_type = self.get_next_question_type(dna, asked_types)
-            
+
             if next_type is None:
-                # All info collected, generate
-                # [NEW] 개선된 Framework 선택 로직 사용
                 dna_dict = {
                     "summary": dna.summary,
                     "target": dna.target,
@@ -638,13 +608,11 @@ class SmartClassifier:
                     "objective": dna.objective
                 }
                 fw_result = await self.select_framework_improved(
-                    all_inputs, dna_dict, request.intent_mode, request.user_language
+                    all_inputs, dna_dict, request.intent_mode, request.user_language, api_key=api_key
                 )
                 framework = fw_result['framework_id']
                 l1_labels = self.get_l1_labels(framework, request.intent_mode, request.user_language)
-                print(f"✅ DNA 필드 완료! Framework (Improved): {framework} [source: {fw_result['source']}]")
-                print(f"📋 L1 Labels: {len(l1_labels)}개")
-                print("="*60 + "\n")
+                logger.info("All DNA fields collected: framework=%s [source=%s]", framework, fw_result['source'])
                 return SmartClassifyResponse(
                     dna_quality_score=quality_score,
                     context_vector=dna,
@@ -653,20 +621,18 @@ class SmartClassifier:
                     l1_labels=l1_labels,
                     reasoning_log=f"All DNA fields collected. {fw_result['source']} selected {framework}."
                 ).model_dump()
-            
+
             # One-Shot에서 생성된 질문 사용
             persona = self.get_persona_for_type(next_type)
             question = result.get("question") or persona["question_template"]
             examples = result.get("question_examples") or persona["examples"]
-            
-            # [NEW] 마크다운 문법 제거
+
+            # 마크다운 문법 제거
             question = strip_markdown(question)
             examples = strip_markdown(examples)
-            
-            print(f"❓ 질문 생성: {next_type}")
-            print(f"   Question: {question[:50]}...")
-            print("="*60 + "\n")
-            
+
+            logger.debug("Asking question type=%s", next_type)
+
             return SmartClassifyResponse(
                 dna_quality_score=quality_score,
                 context_vector=dna,
@@ -677,9 +643,9 @@ class SmartClassifier:
                 question_examples=examples,
                 reasoning_log=f"One-Shot: Asking about {next_type}. Quality={quality_score}."
             ).model_dump()
-        
+
         except Exception as e:
-            print(f"Error in SmartClassifier: {e}")
+            logger.exception("SmartClassifier failed")
             return SmartClassifyResponse(
                 dna_quality_score=0,
                 context_vector=None,
@@ -688,10 +654,6 @@ class SmartClassifier:
                 question_type="identity",
                 reasoning_log=f"Error: {str(e)}"
             ).model_dump()
-        finally:
-            # Restore original client
-            if api_key and original_client is not None:
-                self.client = original_client
     
     def _combine_user_inputs(self, request) -> str:
         """Combine all user inputs from conversation history."""
@@ -702,12 +664,12 @@ class SmartClassifier:
         inputs.append(request.user_input)
         return " ".join(inputs)
     
-    async def _extract_dna(self, combined_input: str, language: str) -> ContextVector:
+    async def _extract_dna(self, client, combined_input: str, language: str) -> ContextVector:
         """Extract DNA from combined user inputs using AI."""
         prompt = self.classifier_prompt_template.replace("{target_language}", language)
         full_prompt = f"{prompt}\n\n[USER INPUT]\n{combined_input}"
-        
-        response = await self.client.aio.models.generate_content(
+
+        response = await client.aio.models.generate_content(
             model=MODEL_REASONING,
             contents=full_prompt,
             config=types.GenerateContentConfig(
@@ -715,9 +677,9 @@ class SmartClassifier:
                 temperature=0.1,
             )
         )
-        
+
         data = safe_json_parse(response.text)
-        
+
         # Extract context_vector from response
         cv_data = data.get("context_vector", {})
         return ContextVector(
@@ -726,8 +688,8 @@ class SmartClassifier:
             edge=cv_data.get("edge", ""),
             objective=cv_data.get("objective", "")
         )
-    
-    async def _extract_dna_infer(self, combined_input: str, language: str, intent_mode: str = "creation") -> dict:
+
+    async def _extract_dna_infer(self, client, combined_input: str, language: str, intent_mode: str = "creation") -> dict:
         """
         Infer Mode: Extract DNA with silent inference.
         For long input (>=100 chars), AI infers missing fields without asking questions.
@@ -735,7 +697,7 @@ class SmartClassifier:
         # Get available frameworks for this intent mode
         available_frameworks = get_frameworks_for_intent(intent_mode)
         frameworks_str = ", ".join(available_frameworks)
-        
+
         # Format prompt
         prompt = self.dna_infer_prompt_template.replace(
             "{user_input}", combined_input
@@ -746,8 +708,8 @@ class SmartClassifier:
         ).replace(
             "{available_frameworks}", frameworks_str
         )
-        
-        response = await self.client.aio.models.generate_content(
+
+        response = await client.aio.models.generate_content(
             model=MODEL_REASONING,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -755,38 +717,36 @@ class SmartClassifier:
                 temperature=0.2,
             )
         )
-        
+
         data = safe_json_parse(response.text)
-        
+
         # Extract context_vector from response
         cv_data = data.get("context_vector", {})
-        
+
         # Log inferred fields and framework
         inferred = data.get("inferred_fields", [])
         if inferred:
-            print(f"   → 추론된 필드: {', '.join(inferred)}")
-        
+            logger.debug("Inferred fields: %s", inferred)
+
         framework = data.get("recommended_framework", "BMC")
         reasoning = data.get("framework_reasoning", "")
-        print(f"   → AI 프레임워크 선택: {framework}")
-        if reasoning:
-            print(f"      이유: {reasoning}")
-        
+        logger.debug("AI framework choice: %s (%s)", framework, reasoning)
+
         dna = ContextVector(
             summary=cv_data.get("summary", combined_input),
             target=cv_data.get("target", ""),
             edge=cv_data.get("edge", ""),
             objective=cv_data.get("objective", "")
         )
-        
+
         return {
             "dna": dna,
             "recommended_framework": framework,
             "framework_reasoning": reasoning
         }
-    
+
     async def _extract_dna_and_question(
-        self, combined_input: str, history: list, language: str, intent_mode: str = "creation"
+        self, client, combined_input: str, history: list, language: str, intent_mode: str = "creation"
     ) -> dict:
         """
         One-Shot: Extract DNA and generate question in single AI call.
@@ -795,13 +755,13 @@ class SmartClassifier:
         # Get available frameworks for this intent mode
         available_frameworks = get_frameworks_for_intent(intent_mode)
         frameworks_str = ", ".join(available_frameworks)
-        
+
         # Format conversation history
         history_str = "\n".join([
             f"{'User' if msg.role == 'user' else 'AI'}: {msg.content}"
             for msg in history
         ]) if history else "(첫 대화)"
-        
+
         # Format prompt
         prompt = self.dna_question_prompt_template.replace(
             "{user_input}", combined_input
@@ -812,8 +772,8 @@ class SmartClassifier:
         ).replace(
             "{available_frameworks}", frameworks_str
         )
-        
-        response = await self.client.aio.models.generate_content(
+
+        response = await client.aio.models.generate_content(
             model=MODEL_REASONING,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -821,9 +781,9 @@ class SmartClassifier:
                 temperature=0.2,
             )
         )
-        
+
         data = safe_json_parse(response.text)
-        
+
         # Extract DNA
         cv_data = data.get("context_vector", {})
         dna = ContextVector(
@@ -832,14 +792,12 @@ class SmartClassifier:
             edge=cv_data.get("edge", ""),
             objective=cv_data.get("objective", "")
         )
-        
+
         # Extract AI-selected framework
         framework = data.get("recommended_framework", "BMC")
         reasoning = data.get("framework_reasoning", "")
-        print(f"   → AI 프레임워크 선택: {framework}")
-        if reasoning:
-            print(f"      이유: {reasoning}")
-        
+        logger.debug("AI framework choice: %s (%s)", framework, reasoning)
+
         return {
             "dna": dna,
             "recommended_framework": framework,
@@ -848,93 +806,21 @@ class SmartClassifier:
             "question_type": data.get("question_type", "target"),
             "question_examples": data.get("question_examples", "")
         }
-    
-    async def _generate_question(
-        self, dna: ContextVector, question_type: str, 
-        history: list, language: str
-    ) -> dict:
-        """Generate contextual question using AI."""
-        persona = self.get_persona_for_type(question_type)
-        
-        # Format conversation history
-        history_str = "\n".join([
-            f"{'User' if msg.role == 'user' else 'AI'}: {msg.content}"
-            for msg in history
-        ]) if history else "(첫 대화)"
-        
-        # Format asked types
-        asked = self.get_asked_types(history)
-        asked_str = ", ".join(asked) if asked else "없음"
-        
-        prompt = self.question_prompt_template.replace(
-            "{summary}", dna.summary
-        ).replace(
-            "{target}", dna.target
-        ).replace(
-            "{target_status}", "✅" if len(dna.target) > 5 else "❌ 부족"
-        ).replace(
-            "{edge}", dna.edge
-        ).replace(
-            "{edge_status}", "✅" if len(dna.edge) > 5 else "❌ 부족"
-        ).replace(
-            "{objective}", dna.objective
-        ).replace(
-            "{objective_status}", "✅" if len(dna.objective) > 5 else "❌ 부족"
-        ).replace(
-            "{conversation_history}", history_str
-        ).replace(
-            "{asked_types}", asked_str
-        ).replace(
-            "{next_question_type}", question_type
-        ).replace(
-            "{persona_name}", persona["persona"]
-        ).replace(
-            "{persona_instruction}", persona["system_instruction"]
-        ).replace(
-            "{target_language}", language
-        )
-        
-        response = await self.client.aio.models.generate_content(
-            model=MODEL_REASONING,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.3,
-            )
-        )
-        
-        return safe_json_parse(response.text)
-    
-    def _select_framework(self, dna: ContextVector) -> str:
-        """Select best framework based on DNA content."""
-        summary_lower = dna.summary.lower()
-        
-        # Simple keyword matching for framework selection
-        if any(kw in summary_lower for kw in ["창업", "스타트업", "신규", "아이디어"]):
-            return "LEAN"
-        elif any(kw in summary_lower for kw in ["기존", "확장", "성장", "모델"]):
-            return "BMC"
-        elif any(kw in summary_lower for kw in ["문제", "원인", "왜"]):
-            return "CAUSE"
-        elif any(kw in summary_lower for kw in ["단계", "로드맵", "순서", "프로세스"]):
-            return "PROCESS"
-        elif any(kw in summary_lower for kw in ["환경", "시장", "트렌드"]):
-            return "PESTEL"
-        elif any(kw in summary_lower for kw in ["고객", "타겟", "페르소나"]):
-            return "PERSONA"
-        else:
-            return "LEAN"  # Default for new ideas
-    
+
     def _auto_fill_dna(self, dna: ContextVector, context: str) -> ContextVector:
-        """Auto-fill missing DNA fields with reasonable defaults."""
+        """Auto-fill missing DNA fields with reasonable defaults.
+
+        `context` is kept for API parity with future locale-aware fills.
+        """
+        del context  # currently unused; reserved for future locale defaults
         if len(dna.target.strip()) < 5:
             dna.target = "일반 소비자 및 잠재 고객"
-        
+
         if len(dna.edge.strip()) < 5:
             dna.edge = "시장 내 경쟁력 확보를 위한 차별화 전략"
-        
+
         if len(dna.objective.strip()) < 5:
             dna.objective = "지속 가능한 성장과 안정적 수익 창출"
-        
+
         dna.is_sanitized = True
         return dna

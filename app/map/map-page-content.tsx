@@ -6,7 +6,7 @@ import { MindmapCanvas } from "@/components/mindmap/mindmap-canvas"
 import { ReportPanel } from "@/components/mindmap/report-panel"
 import { useMindmapStore } from "@/stores/mindmap-store"
 import { expandNode } from "@/lib/api"
-import { saveTree } from "@/lib/tree-cache"
+import { loadTree, saveTree } from "@/lib/tree-cache"
 import { createSkeletonTree } from "@/lib/framework-templates"
 import { MindmapNode, ExpandRequest } from "@/types/mindmap"
 import { toast } from "sonner"
@@ -97,22 +97,44 @@ export default function MapPageContent() {
 
         // 1) "자유롭게 시작하기" path — single root node, no L1 children.
         //    Label is editable inline so the user can rename right away.
+        //    On refresh / new-tab the in-memory store is empty, so try
+        //    tree-cache first to recover any edits the user already made.
         if (isFreeStart) {
-            setRootNode({
-                id: 'root',
-                label: topic,
-                type: 'root',
-                description: '자유 마인드맵',
-                children: [],
-            })
+            const cached = topic ? loadTree(topic) : null
+            if (cached) {
+                setRootNode(cached)
+            } else {
+                setRootNode({
+                    id: 'root',
+                    label: topic,
+                    type: 'root',
+                    description: '자유 마인드맵',
+                    children: [],
+                })
+            }
             setLoading(false)
             return
         }
 
         // 2) File-uploaded path — SaveLoadButtons already called setRootNode
-        //    before navigating here. If the rootNode check above didn't
-        //    short-circuit (rare race), don't seed a skeleton on top of it.
+        //    before navigating here. The rootNode guard above short-circuits
+        //    that case. If we got here, the in-memory store is empty (user
+        //    refreshed or opened the URL in a new tab), so try tree-cache;
+        //    fall back to a blank root rather than rendering null forever
+        //    when the cache also lost the topic.
         if (isLoaded) {
+            const cached = topic ? loadTree(topic) : null
+            if (cached) {
+                setRootNode(cached)
+            } else {
+                setRootNode({
+                    id: 'root',
+                    label: topic || '불러온 마인드맵',
+                    type: 'root',
+                    description: '복원할 데이터를 찾지 못했어요. 다시 불러와 주세요.',
+                    children: [],
+                })
+            }
             setLoading(false)
             return
         }

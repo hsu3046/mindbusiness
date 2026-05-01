@@ -2,8 +2,13 @@
 Node Expander using Gemini Flash.
 Dynamically expands nodes based on context and employs hybrid expansion strategy.
 Enhanced with Layer Definition, Sibling Context, and Smart Count Control.
+
+Phase 3 architecture: `expand_node` resolves a `GenerationStrategy` from the
+request's `expansion_mode`, fans variants out in parallel, then aggregates.
+The single-call legacy path is the `default` strategy (1 balanced variant).
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -15,10 +20,15 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY, MODEL_PRO, STAGE_CONFIG
+from config import GEMINI_API_KEY, MODEL_LITE, STAGE_CONFIG
 from schemas.expand_schema import ExpandRequest, ExpandResponse, ExpandResponseSchema
-from lib.json_utils import safe_json_parse_tracked
+from lib.json_utils import safe_json_parse_tracked, safe_json_parse
 from lib.gemini_config import build_config, get_model
+from logic.strategy_registry import (
+    GenerationStrategy,
+    GenerationVariant,
+    get_strategy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +126,6 @@ class NodeExpander:
         Returns:
             Dictionary containing expansion results
         """
-        response = None
         try:
             client = self._get_client(api_key)
 
@@ -144,117 +153,63 @@ class NodeExpander:
             if stage_key not in STAGE_CONFIG:
                 stage_key = "expand"
 
-            # 5. Phase 2: apply user-selected expansion mode overrides.
-            #     `default` is a no-op; the others tweak temperature/top_p/
-            #     model + bump or shrink the count + append a prompt block.
+            # 5. Phase 3: resolve strategy + fan variants out in parallel.
+            #     `default` strategy = 1 variant (current behavior).
+            #     `diverse` = 3 variants → fuse_dedupe aggregator.
+            #     `deep` = Pro + HIGH reasoning, single variant.
+            #     `mece` = single variant + MECE validator pass.
             mode = request.expansion_mode or "default"
+            strategy = get_strategy(mode)
             base_temp = STAGE_CONFIG[stage_key]["temperature"]
             max_children = self._get_layer_definition(request.current_depth).get("max_children", 5)
 
-            mode_extra: dict = {}
-            mode_model_override: Optional[str] = None
-            adjusted_count = generate_count
-
-            if mode == "diverse":
-                mode_extra["temperature_override"] = min(0.95, base_temp + 0.2)
-                mode_extra["top_p"] = 0.97
-                # Ask the model for ~1.5x children so the post-pass dedupe
-                # has headroom to cut overlaps and still hit the floor.
-                adjusted_count = min(max_children, math.ceil(generate_count * 1.5))
-            elif mode == "deep":
-                # Pro + HIGH reasoning; cool the temperature so reasoning
-                # tokens dominate sampling rather than divergence.
-                mode_model_override = MODEL_PRO
-                mode_extra["temperature_override"] = max(0.2, base_temp - 0.2)
-                mode_extra["thinking_config"] = types.ThinkingConfig(
-                    thinking_level=types.ThinkingLevel.HIGH,
+            # Run variants in parallel. Each returns a `Candidate` dict:
+            #   {label, weight, children: [...], applied_framework_id,
+            #    expansion_mode, confidence_score, alternative_framework,
+            #    parse_recovery: bool}
+            variant_tasks = [
+                self._run_variant(
+                    client=client,
+                    request=request,
+                    variant=variant,
+                    stage_key=stage_key,
+                    base_temp=base_temp,
+                    base_count=generate_count,
+                    max_children=max_children,
+                    target_layer=target_layer,
+                    force_logic_tree=force_logic_tree,
+                    mode=mode,
                 )
-            elif mode == "mece":
-                mode_extra["temperature_override"] = max(0.2, base_temp - 0.2)
-                mode_extra["top_p"] = 0.85
+                for variant in strategy.variants
+            ]
+            candidates = await asyncio.gather(*variant_tasks, return_exceptions=False)
 
-            # Build prompts with the (possibly bumped) count + mode addon.
-            #    Operator instructions go to system_instruction, untrusted
-            #    user-supplied fields are confined to user_contents to
-            #    mitigate prompt injection.
-            system_instruction, user_contents = self._build_prompts(
-                request, adjusted_count, force_logic_tree, mode=mode,
+            # 6. Aggregate variants → single child list at target count.
+            children, agg_meta = self._aggregate_candidates(
+                candidates,
+                target_count=generate_count,
+                existing_labels=request.existing_children or [],
+                aggregator_mode=strategy.aggregator,
             )
 
-            # 6. Call Gemini. `seed` (optional) is forwarded for repro;
-            #    L3+ adds anti-repetition penalties so siblings don't all
-            #    start with the same lead noun ("효율적인 X / 효율적인 Y").
-            #    `response_schema` enforces structured output at the model
-            #    level, eliminating the JSON recovery chain in the happy
-            #    path — but we keep mime + recovery as defense-in-depth.
-            extra: dict = dict(mode_extra)
-            if request.seed is not None:
-                extra["seed"] = request.seed
-            if target_layer >= 3:
-                # Don't clobber a mode-set top_p with the L3+ default.
-                extra.setdefault("presence_penalty", 0.4)
-                extra.setdefault("frequency_penalty", 0.3)
+            # The "winner" candidate's metadata wins for response-level
+            # fields (applied_framework_id, expansion_mode, confidence,
+            # alternative_framework). For best_of_n that's the single
+            # variant's; for fuse_dedupe it's the highest-weighted variant
+            # that contributed.
+            winner = agg_meta["winner"]
+            applied_framework_id = winner.get("applied_framework_id")
+            data: dict = {
+                "children": children,
+                "applied_framework_id": applied_framework_id,
+                "expansion_mode": winner.get("expansion_mode") or "logic_tree",
+                "confidence_score": float(winner.get("confidence_score") or 0.0),
+                "alternative_framework": winner.get("alternative_framework"),
+            }
+            parse_recovery_any = any(c.get("parse_recovery") for c in candidates)
 
-            call_model = mode_model_override or get_model(stage_key)
-            try:
-                response = await client.aio.models.generate_content(
-                    model=call_model,
-                    contents=user_contents,
-                    config=build_config(
-                        stage_key,
-                        response_mime_type="application/json",
-                        system_instruction=system_instruction,
-                        response_schema=ExpandResponseSchema,
-                        **extra,
-                    ),
-                )
-            except (TypeError, ValueError) as schema_err:
-                # Some google-genai versions reject Optional[...] in
-                # response_schema. Fall back to mime-only — the recovery
-                # chain handles malformed output, and telemetry will
-                # surface the regression so we can fix the schema.
-                logger.warning(
-                    "response_schema rejected (%s) — falling back to mime-only",
-                    schema_err,
-                )
-                response = await client.aio.models.generate_content(
-                    model=call_model,
-                    contents=user_contents,
-                    config=build_config(
-                        stage_key,
-                        response_mime_type="application/json",
-                        system_instruction=system_instruction,
-                        **extra,
-                    ),
-                )
-
-            # Telemetry-friendly: track the actual count we asked for after
-            # mode adjustment (different from `generate_count` only in
-            # diverse mode).
-            generate_count = adjusted_count
-
-            # 6. Parse and validate (track recovery for telemetry).
-            json_str = response.text
-            data, parse_recovery = safe_json_parse_tracked(json_str)
-            children = data.get("children", [])
-
-            # 7. Post-process:
-            #    (a) cap count, (b) drop dupes vs existing children, (c) drop
-            #    same-call dupes, (d) score importance, (e) regenerate IDs.
-            children = self._adjust_children_count(
-                children,
-                generate_count,
-                request,
-                force_logic_tree,
-            )
-            children = self._dedupe_children(children, request.existing_children or [])
-
-            applied_framework_id = data.get("applied_framework_id")
+            # 7. Re-score importance after aggregation (positions changed).
             for idx, child in enumerate(children):
-                # Honor model-supplied importance only when it's a clear
-                # signal (1, 3, 4, 5). Otherwise (None or default 2) compute
-                # heuristically so the frontend has a real distribution to
-                # render with.
                 model_imp = child.get("importance")
                 if model_imp not in (1, 3, 4, 5):
                     child["importance"] = self._score_importance(
@@ -264,27 +219,41 @@ class NodeExpander:
                         applied_framework_id,
                     )
 
-            data["children"] = children
-
-            # 8. Regenerate unique IDs (ASCII-safe to keep React Flow happy)
+            # 8. Regenerate unique IDs across the merged set (ASCII-safe).
             ascii_prefix = re.sub(r'[^A-Za-z0-9_]', '', request.target_node_label.replace(" ", "_"))[:12]
             if not ascii_prefix:
                 ascii_prefix = "node"
             for child in children:
                 child["id"] = f"{ascii_prefix}_{uuid4().hex[:8]}"
 
-            # Validate with Pydantic
+            # 9. MECE validator pass (when strategy enables it).
+            #    Phase 3.1 detects + logs; auto-fix lands in 3.2 along with
+            #    the per-pair regenerate loop. For now overlap detection
+            #    surfaces in telemetry so we can measure how often the
+            #    prompt-only mece variant actually delivers MECE.
+            mece_overlap = False
+            if strategy.enable_mece_check and len(children) >= 2:
+                try:
+                    mece_overlap = await self._mece_check(client, children)
+                except Exception as exc:  # noqa: BLE001 — best-effort sec pass
+                    logger.warning("MECE check skipped (%s)", exc)
+
+            # 10. Validate with Pydantic
             validated_result = ExpandResponse.model_validate(data)
 
-            # 9. Telemetry — one structured line per expansion.
-            #    Phase 1 adds stage + intent + dna flags.
+            # 11. Telemetry — one structured line per expansion (Phase 3 adds
+            #     strategy, variants, aggregator, mece_overlap).
             logger.info(
-                "expand_telemetry depth=%d stage=%s mode=%s framework=%s used=%s "
-                "requested=%d returned=%d confidence=%.2f language=%s "
-                "intent=%s dna=%s parse_recovery=%s seed=%s applied=%s",
+                "expand_telemetry depth=%d stage=%s mode=%s strategy=%s variants=%d "
+                "agg=%s framework=%s used=%s requested=%d returned=%d "
+                "confidence=%.2f language=%s intent=%s dna=%s "
+                "parse_recovery=%s mece_overlap=%s seed=%s applied=%s",
                 request.current_depth,
                 stage_key,
                 mode,
+                strategy.name,
+                len(strategy.variants),
+                strategy.aggregator,
                 request.current_framework_id,
                 ",".join(request.used_frameworks) if request.used_frameworks else "-",
                 generate_count,
@@ -293,7 +262,8 @@ class NodeExpander:
                 request.language,
                 request.intent_mode or "-",
                 "y" if request.context_vector else "n",
-                parse_recovery,
+                parse_recovery_any,
+                mece_overlap,
                 request.seed if request.seed is not None else "-",
                 validated_result.applied_framework_id or "-",
             )
@@ -312,7 +282,255 @@ class NodeExpander:
         except Exception as e:
             logger.exception("Expander failed")
             return self._error_response(str(e))
-    
+
+    # ─── Phase 3: variant runner ────────────────────────────────────────────
+
+    async def _run_variant(
+        self,
+        *,
+        client,
+        request: ExpandRequest,
+        variant: GenerationVariant,
+        stage_key: str,
+        base_temp: float,
+        base_count: int,
+        max_children: int,
+        target_layer: int,
+        force_logic_tree: bool,
+        mode: str,
+    ) -> dict:
+        """
+        Run ONE Gemini call with the given variant config and return a
+        candidate dict. Each candidate carries its own children list +
+        metadata; the aggregator merges across variants.
+        """
+        # Resolve the variant's effective config (composed onto the stage).
+        eff_temp = max(0.05, min(0.95, base_temp + variant.temperature_delta))
+        eff_count = min(max_children, max(1, math.ceil(base_count * variant.count_factor)))
+        eff_model = variant.model or get_model(stage_key)
+
+        # Build prompts. The variant's prompt addon overrides the request's
+        # mode addon when set — lets a strategy compose multiple addons
+        # later. For Phase 3.1 they're always the same since each strategy
+        # uses one addon family.
+        addon_mode = variant.prompt_addon_key or mode
+        system_instruction, user_contents = self._build_prompts(
+            request, eff_count, force_logic_tree, mode=addon_mode,
+        )
+
+        # Compose extra config kwargs.
+        extra: dict = {"temperature_override": eff_temp}
+        if variant.top_p is not None:
+            extra["top_p"] = variant.top_p
+        if variant.top_k is not None:
+            extra["top_k"] = variant.top_k
+        if variant.candidate_count > 1:
+            extra["candidate_count"] = variant.candidate_count
+        if variant.presence_penalty is not None:
+            extra["presence_penalty"] = variant.presence_penalty
+        if variant.frequency_penalty is not None:
+            extra["frequency_penalty"] = variant.frequency_penalty
+        if variant.reasoning is not None and variant.reasoning != "off":
+            level = {
+                "minimal": types.ThinkingLevel.MINIMAL,
+                "low": types.ThinkingLevel.LOW,
+                "medium": types.ThinkingLevel.MEDIUM,
+                "high": types.ThinkingLevel.HIGH,
+            }.get(variant.reasoning)
+            if level is not None:
+                extra["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+        if request.seed is not None:
+            extra["seed"] = request.seed
+        # L3+ default anti-rep penalties unless variant already set them.
+        if target_layer >= 3:
+            extra.setdefault("presence_penalty", 0.4)
+            extra.setdefault("frequency_penalty", 0.3)
+
+        # Two-stage call: schema-strict first, mime-only fallback on SDK
+        # rejection. Same pattern as Phase 1 — the recovery chain still
+        # handles malformed output as defense-in-depth.
+        try:
+            response = await client.aio.models.generate_content(
+                model=eff_model,
+                contents=user_contents,
+                config=build_config(
+                    stage_key,
+                    response_mime_type="application/json",
+                    system_instruction=system_instruction,
+                    response_schema=ExpandResponseSchema,
+                    **extra,
+                ),
+            )
+        except (TypeError, ValueError) as schema_err:
+            logger.warning(
+                "[%s] response_schema rejected (%s) — mime-only fallback",
+                variant.label, schema_err,
+            )
+            response = await client.aio.models.generate_content(
+                model=eff_model,
+                contents=user_contents,
+                config=build_config(
+                    stage_key,
+                    response_mime_type="application/json",
+                    system_instruction=system_instruction,
+                    **extra,
+                ),
+            )
+
+        # Parse + per-variant post-process. Importance + final IDs happen
+        # AFTER aggregation (positions / cross-variant uniqueness change).
+        data, parse_recovery = safe_json_parse_tracked(response.text)
+        children = data.get("children", []) or []
+        children = self._adjust_children_count(
+            children, eff_count, request, force_logic_tree,
+        )
+        children = self._dedupe_children(children, request.existing_children or [])
+
+        return {
+            "label": variant.label,
+            "weight": variant.weight,
+            "children": children,
+            "applied_framework_id": data.get("applied_framework_id"),
+            "expansion_mode": data.get("expansion_mode"),
+            "confidence_score": data.get("confidence_score") or 0.0,
+            "alternative_framework": data.get("alternative_framework"),
+            "parse_recovery": parse_recovery,
+            "_eff_temp": eff_temp,
+            "_eff_count": eff_count,
+        }
+
+    # ─── Phase 3: candidate aggregator ──────────────────────────────────────
+
+    def _aggregate_candidates(
+        self,
+        candidates: list,
+        target_count: int,
+        existing_labels: list,
+        aggregator_mode: str,
+    ) -> tuple[list, dict]:
+        """
+        Merge multiple candidates into a single child list at target_count.
+
+        - `best_of_n`: pick the candidate with the highest confidence_score
+          (tiebreak: highest variant weight). Single-variant strategies hit
+          this path trivially.
+        - `fuse_dedupe`: pool every child across candidates, sort by
+          (variant_weight × per-call confidence), then walk the sorted list
+          dropping any whose normalized label collides with one already
+          kept (Jaccard ≥ 0.6 on tokenized labels).
+        - `weighted_blend`: like fuse_dedupe but allocates slots
+          proportionally to variant weights. Phase 3.1 falls back to
+          fuse_dedupe — proper blend lands in 3.2 alongside the registry's
+          devils_advocate strategy.
+
+        Returns `(children, meta)` where `meta["winner"]` is the candidate
+        whose response-level metadata wins (applied_framework_id, etc).
+        """
+        # Filter empty / errored candidates so they don't show up as winners.
+        non_empty = [c for c in candidates if c.get("children")]
+        if not non_empty:
+            return [], {"winner": (candidates[0] if candidates else {})}
+
+        if aggregator_mode == "best_of_n" or len(non_empty) == 1:
+            winner = max(
+                non_empty,
+                key=lambda c: (c.get("confidence_score") or 0.0, c.get("weight", 1.0)),
+            )
+            kept = winner["children"][:target_count]
+            return kept, {"winner": winner}
+
+        # fuse_dedupe / weighted_blend — pool, sort, dedupe.
+        seen = {self._normalize_label(s) for s in existing_labels if s}
+        pool: list[tuple[float, dict, dict]] = []
+        for cand in non_empty:
+            conf = cand.get("confidence_score") or 0.0
+            for child in cand["children"]:
+                rank = (cand.get("weight", 1.0)) * (conf + 0.01)
+                pool.append((rank, child, cand))
+
+        pool.sort(key=lambda t: t[0], reverse=True)
+        kept: list = []
+        kept_cands: dict = {}  # candidate.label → contribution count
+        for _, child, cand in pool:
+            key = self._normalize_label(child.get("label", ""))
+            if not key or key in seen:
+                continue
+            if any(self._jaccard_overlap(key, k) >= 0.6 for k in seen):
+                continue
+            seen.add(key)
+            kept.append(child)
+            kept_cands[cand["label"]] = kept_cands.get(cand["label"], 0) + 1
+            if len(kept) >= target_count:
+                break
+
+        # Winner = candidate that contributed the most kept children
+        # (tiebreak: highest weight). Its response-level metadata wins.
+        if kept_cands:
+            top_label = max(
+                kept_cands.items(),
+                key=lambda kv: (kv[1], next(
+                    (c.get("weight", 1.0) for c in non_empty if c["label"] == kv[0]), 1.0,
+                )),
+            )[0]
+            winner = next(c for c in non_empty if c["label"] == top_label)
+        else:
+            winner = non_empty[0]
+
+        return kept, {"winner": winner}
+
+    @staticmethod
+    def _jaccard_overlap(a: str, b: str) -> float:
+        """Char-bigram Jaccard for short Korean/English labels."""
+        if not a or not b:
+            return 0.0
+        sa = {a[i:i+2] for i in range(max(1, len(a) - 1))}
+        sb = {b[i:i+2] for i in range(max(1, len(b) - 1))}
+        if not sa or not sb:
+            return 0.0
+        inter = sa & sb
+        union = sa | sb
+        return len(inter) / len(union) if union else 0.0
+
+    # ─── Phase 3: MECE validator (detect-only in 3.1) ──────────────────────
+
+    async def _mece_check(self, client, children: list) -> bool:
+        """
+        Cheap Lite call asking "are any two of these children semantically
+        overlapping?". Returns True if overlap detected.
+
+        Phase 3.1 ships detection only; Phase 3.2 will use the returned
+        pair to drop+regenerate the loser. Here we just surface the rate
+        in telemetry so we can measure how often the prompt-only mece
+        variant actually delivers MECE.
+        """
+        labels = [c.get("label", "") for c in children if c.get("label")]
+        if len(labels) < 2:
+            return False
+        prompt = (
+            "You are a strict MECE auditor. Below is a list of sibling "
+            "ideas under one parent topic. Decide whether any TWO of them "
+            "are semantically overlapping (covering the same dimension).\n\n"
+            "Return STRICT JSON of the form:\n"
+            '  {"overlap": true|false}\n\n'
+            "List:\n"
+            + "\n".join(f"{i+1}. {label}" for i, label in enumerate(labels))
+        )
+        try:
+            response = await client.aio.models.generate_content(
+                model=MODEL_LITE,
+                contents=prompt,
+                config=build_config(
+                    "validate_key",  # closest existing stage: Lite + temp 0
+                    response_mime_type="application/json",
+                ),
+            )
+            data = safe_json_parse(response.text or "{}")
+            return bool(data.get("overlap"))
+        except Exception:
+            # Detect-only and best-effort — never let a validator failure
+            # block the actual expansion.
+            return False
+
     def _calculate_generate_count(self, current_depth: int, existing_count: int) -> int:
         """
         Calculate how many children to generate.

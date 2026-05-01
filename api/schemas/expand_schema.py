@@ -115,6 +115,20 @@ class ExpandRequest(BaseModel):
         pattern="^(creation|diagnosis|choice|strategy)$",
     )
 
+    expansion_mode: Optional[str] = Field(
+        None,
+        description=(
+            "User-selected generation strategy: default | diverse | deep | "
+            "mece. Each maps to a small bundle of parameter overrides "
+            "(temperature delta, top_p, model swap, prompt addon) the "
+            "expander applies before the Gemini call. None == default. "
+            "Distinct from `ExpandResponse.expansion_mode` which describes "
+            "what kind of structure the AI produced (framework / logic_tree "
+            "/ semi_structured)."
+        ),
+        pattern="^(default|diverse|deep|mece)$",
+    )
+
 
 class ExpandChildSchema(BaseModel):
     """

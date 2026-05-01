@@ -6,6 +6,7 @@ Enhanced with Layer Definition, Sibling Context, and Smart Count Control.
 
 import json
 import logging
+import math
 import random
 import re
 from uuid import uuid4
@@ -14,7 +15,7 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY, STAGE_CONFIG
+from config import GEMINI_API_KEY, MODEL_PRO, STAGE_CONFIG
 from schemas.expand_schema import ExpandRequest, ExpandResponse, ExpandResponseSchema
 from lib.json_utils import safe_json_parse_tracked
 from lib.gemini_config import build_config, get_model
@@ -30,6 +31,40 @@ MAX_FRAMEWORK_NESTING = 2
 
 # Maximum retry for insufficient children
 MAX_RETRY = 1
+
+
+# Phase 2: user-selected expansion modes. Each maps to a small bundle of
+# parameter overrides + a prompt addon. `default` is a no-op so callers
+# that omit `expansion_mode` get the Phase 1 behavior unchanged.
+_MODE_PROMPT_ADDON = {
+    "diverse": (
+        "\n[MODE: DIVERSE]\n"
+        "Take maximally different angles across children. Each child should "
+        "represent a distinct lens (financial / operational / cultural / "
+        "technical / human). Reject the 2-3 most obvious children any "
+        "consultant would propose first; favor unconventional but relevant "
+        "framings. Anti-pattern: variations of the same noun.\n"
+    ),
+    "deep": (
+        "\n[MODE: DEEP]\n"
+        "Think step-by-step (you have reasoning enabled):\n"
+        "  1. What FUNDAMENTAL question is this node asking?\n"
+        "  2. What 2-3 deepest principles govern this domain?\n"
+        "  3. What 2nd-order effects emerge from each candidate child?\n"
+        "  4. Eliminate children whose 2nd-order effects are weak.\n"
+        "Output only the children that survived the depth check.\n"
+    ),
+    "mece": (
+        "\n[MODE: MECE-STRICT]\n"
+        "Children MUST be Mutually Exclusive AND Collectively Exhaustive.\n"
+        "Before responding, internally verify:\n"
+        "  1. No two children share meaningful semantic overlap (must be NO).\n"
+        "  2. Together they cover all major dimensions of the parent (YES).\n"
+        "  3. All children are at the SAME abstraction level (YES).\n"
+        "If you cannot satisfy all three with the requested count, return "
+        "fewer children and set expansion_mode='semi_structured'.\n"
+    ),
+}
 
 
 class NodeExpander:
@@ -101,14 +136,7 @@ class NodeExpander:
             # 3. Check framework nesting limit
             force_logic_tree = self._check_nesting_limit(request.used_frameworks)
 
-            # 4. Build prompt — operator instructions go to system_instruction,
-            #    untrusted user-supplied fields are confined to the user contents
-            #    block to mitigate prompt injection.
-            system_instruction, user_contents = self._build_prompts(
-                request, generate_count, force_logic_tree
-            )
-
-            # 5. Resolve the per-depth stage (Phase 1 depth curve).
+            # 4. Resolve the per-depth stage (Phase 1 depth curve).
             #    `expand_l1..l4` exists; otherwise fall back to bare "expand".
             #    The child layer = current_depth + 1 (L0 root expanding into L1).
             target_layer = min(max(request.current_depth + 1, 1), 4)
@@ -116,22 +144,61 @@ class NodeExpander:
             if stage_key not in STAGE_CONFIG:
                 stage_key = "expand"
 
+            # 5. Phase 2: apply user-selected expansion mode overrides.
+            #     `default` is a no-op; the others tweak temperature/top_p/
+            #     model + bump or shrink the count + append a prompt block.
+            mode = request.expansion_mode or "default"
+            base_temp = STAGE_CONFIG[stage_key]["temperature"]
+            max_children = self._get_layer_definition(request.current_depth).get("max_children", 5)
+
+            mode_extra: dict = {}
+            mode_model_override: Optional[str] = None
+            adjusted_count = generate_count
+
+            if mode == "diverse":
+                mode_extra["temperature_override"] = min(0.95, base_temp + 0.2)
+                mode_extra["top_p"] = 0.97
+                # Ask the model for ~1.5x children so the post-pass dedupe
+                # has headroom to cut overlaps and still hit the floor.
+                adjusted_count = min(max_children, math.ceil(generate_count * 1.5))
+            elif mode == "deep":
+                # Pro + HIGH reasoning; cool the temperature so reasoning
+                # tokens dominate sampling rather than divergence.
+                mode_model_override = MODEL_PRO
+                mode_extra["temperature_override"] = max(0.2, base_temp - 0.2)
+                mode_extra["thinking_config"] = types.ThinkingConfig(
+                    thinking_level=types.ThinkingLevel.HIGH,
+                )
+            elif mode == "mece":
+                mode_extra["temperature_override"] = max(0.2, base_temp - 0.2)
+                mode_extra["top_p"] = 0.85
+
+            # Build prompts with the (possibly bumped) count + mode addon.
+            #    Operator instructions go to system_instruction, untrusted
+            #    user-supplied fields are confined to user_contents to
+            #    mitigate prompt injection.
+            system_instruction, user_contents = self._build_prompts(
+                request, adjusted_count, force_logic_tree, mode=mode,
+            )
+
             # 6. Call Gemini. `seed` (optional) is forwarded for repro;
             #    L3+ adds anti-repetition penalties so siblings don't all
             #    start with the same lead noun ("효율적인 X / 효율적인 Y").
             #    `response_schema` enforces structured output at the model
             #    level, eliminating the JSON recovery chain in the happy
             #    path — but we keep mime + recovery as defense-in-depth.
-            extra: dict = {}
+            extra: dict = dict(mode_extra)
             if request.seed is not None:
                 extra["seed"] = request.seed
             if target_layer >= 3:
-                extra["presence_penalty"] = 0.4
-                extra["frequency_penalty"] = 0.3
+                # Don't clobber a mode-set top_p with the L3+ default.
+                extra.setdefault("presence_penalty", 0.4)
+                extra.setdefault("frequency_penalty", 0.3)
 
+            call_model = mode_model_override or get_model(stage_key)
             try:
                 response = await client.aio.models.generate_content(
-                    model=get_model(stage_key),
+                    model=call_model,
                     contents=user_contents,
                     config=build_config(
                         stage_key,
@@ -151,7 +218,7 @@ class NodeExpander:
                     schema_err,
                 )
                 response = await client.aio.models.generate_content(
-                    model=get_model(stage_key),
+                    model=call_model,
                     contents=user_contents,
                     config=build_config(
                         stage_key,
@@ -160,6 +227,11 @@ class NodeExpander:
                         **extra,
                     ),
                 )
+
+            # Telemetry-friendly: track the actual count we asked for after
+            # mode adjustment (different from `generate_count` only in
+            # diverse mode).
+            generate_count = adjusted_count
 
             # 6. Parse and validate (track recovery for telemetry).
             json_str = response.text
@@ -207,11 +279,12 @@ class NodeExpander:
             # 9. Telemetry — one structured line per expansion.
             #    Phase 1 adds stage + intent + dna flags.
             logger.info(
-                "expand_telemetry depth=%d stage=%s framework=%s used=%s "
+                "expand_telemetry depth=%d stage=%s mode=%s framework=%s used=%s "
                 "requested=%d returned=%d confidence=%.2f language=%s "
                 "intent=%s dna=%s parse_recovery=%s seed=%s applied=%s",
                 request.current_depth,
                 stage_key,
+                mode,
                 request.current_framework_id,
                 ",".join(request.used_frameworks) if request.used_frameworks else "-",
                 generate_count,
@@ -278,7 +351,8 @@ class NodeExpander:
         self,
         request: ExpandRequest,
         generate_count: int,
-        force_logic_tree: bool
+        force_logic_tree: bool,
+        mode: str = "default",
     ) -> tuple[str, str]:
         """
         Build (system_instruction, user_contents) pair.
@@ -311,15 +385,21 @@ The parent node's siblings (for broader context):
 Focus: This expansion is specifically about the target node, not about the above siblings.
 """
 
-        # Build existing children context (for add mode)
+        # Build existing children context (for add mode). When `existing_children`
+        # is non-empty we strengthen the section into [EXPLICIT NEW ANGLE] —
+        # the user is explicitly asking for "다른 관점으로 추가" so the model
+        # should pivot to a different lens, not just dedupe by string.
         existing_section = ""
         if request.existing_children:
             existing_list = "\n".join([f"- {c}" for c in request.existing_children])
             existing_section = f"""
-[EXISTING CHILDREN - DO NOT DUPLICATE]
-The following children already exist:
+[EXPLICIT NEW ANGLE — ADD MODE]
+The user already saw these children of the target node:
 {existing_list}
-Generate NEW children that are DIFFERENT from the above.
+Now generate children that approach the target from a DIFFERENT lens than
+the above. Examples of angle shifts: financial → operational, internal →
+external, customer → competitor, short-term → long-term. Children must be
+non-overlapping with the existing list AND non-overlapping with each other.
 """
 
         # Build layer definition section
@@ -375,6 +455,9 @@ Format: {layer_def.get('format', 'Short phrases')}
                 "Avoid repeating the same leading noun across children.\n"
             )
 
+        # Phase 2: user-selected expansion-mode addon.
+        mode_section = _MODE_PROMPT_ADDON.get(mode, "")
+
         # Build force instruction
         force_instruction = self._build_force_instruction(
             request.force_framework,
@@ -386,7 +469,8 @@ Format: {layer_def.get('format', 'Short phrases')}
             f"{self.system_prompt}\n\n"
             f"[TARGET LANGUAGE]\n{request.language}\n"
             f"{sibling_section}{parent_sibling_section}{existing_section}"
-            f"{dna_section}{intent_section}{layer_section}{anti_rep_section}\n"
+            f"{dna_section}{intent_section}{layer_section}{anti_rep_section}"
+            f"{mode_section}\n"
             "[CONSTRAINTS]\n"
             f"- Generate exactly {generate_count} children (no more, no less)\n"
             f"- Current Framework: {request.current_framework_id}\n"

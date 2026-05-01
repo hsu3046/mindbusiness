@@ -5,6 +5,23 @@ import { saveTree } from '@/lib/tree-cache'
 /** Intent buckets the smart-classify pipeline emits. */
 export type IntentMode = 'creation' | 'diagnosis' | 'choice' | 'strategy'
 
+/** User-selected expansion strategy. See ExpandRequest.expansion_mode. */
+export type ExpansionMode = 'default' | 'diverse' | 'deep' | 'mece'
+
+const EXPANSION_MODE_STORAGE_KEY = 'mindbusiness_expansion_mode'
+const DEFAULT_EXPANSION_MODE: ExpansionMode = 'default'
+
+function readPersistedExpansionMode(): ExpansionMode {
+    if (typeof window === 'undefined') return DEFAULT_EXPANSION_MODE
+    try {
+        const v = window.localStorage.getItem(EXPANSION_MODE_STORAGE_KEY)
+        if (v === 'default' || v === 'diverse' || v === 'deep' || v === 'mece') return v
+    } catch {
+        // localStorage unavailable — fall through to default
+    }
+    return DEFAULT_EXPANSION_MODE
+}
+
 type ViewMode = 'card' | 'tree' | 'mindmap'
 
 // 삭제된 노드 백업 정보
@@ -59,6 +76,13 @@ interface MindmapStore {
      * prompt can tone-shift toward the right kind of children.
      */
     intentMode: IntentMode | null
+    /**
+     * Currently-selected expansion mode (default / diverse / deep / mece).
+     * Applied to every AI확장 click until the user changes it via the
+     * mode picker. Persisted to localStorage so the choice survives a
+     * refresh.
+     */
+    expansionMode: ExpansionMode
 
     // Delete/Undo State
     deletedNodeBackup: DeletedNodeBackup | null
@@ -74,6 +98,7 @@ interface MindmapStore {
     setLanguage: (language: AppLanguage) => void
     setContextVector: (cv: ContextVector | null) => void
     setIntentMode: (mode: IntentMode | null) => void
+    setExpansionMode: (mode: ExpansionMode) => void
     setRootNode: (node: MindmapNode) => void
     setCurrentNode: (node: MindmapNode) => void
     navigateTo: (node: MindmapNode) => void
@@ -112,6 +137,7 @@ const initialState = {
     language: readPersistedLanguage(),
     contextVector: null as ContextVector | null,
     intentMode: null as IntentMode | null,
+    expansionMode: readPersistedExpansionMode(),
     deletedNodeBackup: null as DeletedNodeBackup | null,
     viewMode: 'mindmap' as ViewMode,
     expandingNodeId: null,
@@ -147,6 +173,16 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
 
     setContextVector: (cv) => set({ contextVector: cv }),
     setIntentMode: (mode) => set({ intentMode: mode }),
+    setExpansionMode: (mode) => {
+        set({ expansionMode: mode })
+        if (typeof window !== 'undefined') {
+            try {
+                window.localStorage.setItem(EXPANSION_MODE_STORAGE_KEY, mode)
+            } catch {
+                // private mode etc — silently skip persist
+            }
+        }
+    },
 
     setRootNode: (node) => {
         set({

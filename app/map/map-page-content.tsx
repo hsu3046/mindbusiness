@@ -106,6 +106,7 @@ export default function MapPageContent() {
         language,
         contextVector,
         intentMode,
+        expansionMode,
         setRootNode,
         setTopic,
         setIntentMode,
@@ -289,6 +290,9 @@ export default function MapPageContent() {
                 // and intent. Both optional — backend degrades cleanly.
                 ...(contextVector ? { context_vector: contextVector } : {}),
                 ...(intentMode ? { intent_mode: intentMode } : {}),
+                // Phase 2: user-selected mode (always present in store,
+                // default = "default" which the backend treats as no-op).
+                expansion_mode: expansionMode,
             }
 
             const response = await expandNode(request)
@@ -333,7 +337,13 @@ export default function MapPageContent() {
                 })
             } else {
                 const baseDesc = `${returnedChildren.length}개 하위 항목 추가됨`
-                toast.success('아이디어 확장 완료!', {
+                const titleByMode: Record<string, string> = {
+                    default: '아이디어 확장 완료!',
+                    diverse: '다양한 관점으로 확장 완료!',
+                    deep: '깊이있게 확장 완료!',
+                    mece: '핵심만 추려서 확장 완료!',
+                }
+                toast.success(titleByMode[expansionMode] ?? titleByMode.default, {
                     description: isDebug && typeof seed === 'number'
                         ? `${baseDesc} · seed=${seed}`
                         : baseDesc,
@@ -352,6 +362,7 @@ export default function MapPageContent() {
         language,
         contextVector,
         intentMode,
+        expansionMode,
         isDebug,
         searchParams,
         setExpanding,

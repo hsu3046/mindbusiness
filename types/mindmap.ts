@@ -89,6 +89,18 @@ export interface ExpandRequest {
      * prompt's tone toward the right kind of children at deep levels.
      */
     intent_mode?: 'creation' | 'diagnosis' | 'choice' | 'strategy'
+    /**
+     * User-selected expansion strategy (Phase 2 mode dropdown). Each maps
+     * to a parameter override bundle in the backend (temperature delta,
+     * top_p, model swap, prompt addon).
+     *   - default: stage settings as-is
+     *   - diverse: hotter + top_p high + ~1.5x count + diversity prompt
+     *   - deep: Pro + HIGH reasoning + cooler + step-by-step prompt
+     *   - mece: cooler + tighter top_p + MECE-strict prompt
+     * Distinct from `ExpandResponse.expansion_mode` which describes the
+     * structure shape the AI produced.
+     */
+    expansion_mode?: 'default' | 'diverse' | 'deep' | 'mece'
 }
 
 export interface ExpandResponse {

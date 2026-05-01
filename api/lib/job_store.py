@@ -162,13 +162,37 @@ async def get_job(job_id: str) -> Optional[dict]:
 
 
 async def append_chunk(job_id: str, chunk: str) -> None:
-    """Append a chunk to the job's chunk list."""
+    """Append a raw text chunk (legacy single-channel format).
+
+    Stored as a typed JSON envelope so the SSE forwarder treats it
+    identically to chunks pushed by `append_text()` below.
+    """
+    await append_text(job_id, chunk)
+
+
+async def append_text(job_id: str, text: str) -> None:
+    """Append a `{"type": "text", "text": ...}` envelope to the chunk list."""
     redis = _get_redis()
     if redis is None:
         return
     key = f"job:{job_id}:chunks"
-    await redis.rpush(key, chunk)
-    # Refresh TTL on every chunk so a slow stream doesn't get evicted mid-flight.
+    payload = json.dumps({"type": "text", "text": text}, ensure_ascii=False)
+    await redis.rpush(key, payload)
+    await redis.expire(key, JOB_TTL_SECONDS)
+
+
+async def append_phase(job_id: str, phase: str) -> None:
+    """Append a `{"type": "phase", "phase": ...}` envelope to the chunk list.
+
+    The forwarder replays these in the same cursor stream as text chunks, so
+    a reconnecting client sees the phase transitions in the right order.
+    """
+    redis = _get_redis()
+    if redis is None:
+        return
+    key = f"job:{job_id}:chunks"
+    payload = json.dumps({"type": "phase", "phase": phase}, ensure_ascii=False)
+    await redis.rpush(key, payload)
     await redis.expire(key, JOB_TTL_SECONDS)
 
 

@@ -124,18 +124,48 @@ async def _run_report_job(
     body: ReportRequest,
     api_key: Optional[str],
 ) -> None:
-    """Background task: stream Gemini chunks into a Redis list."""
+    """Background task: Researcher → Writer with phase signals.
+
+    Sequence of envelopes pushed onto the chunk list (replayable by the
+    SSE forwarder via cursor):
+
+        phase: researching
+        text:  "**참고 자료** ... bullets ..."  (only if research succeeded)
+        phase: writing
+        text:  "## 1. ..." (writer chunks streamed one-by-one)
+    """
+    report_gen = _get_report_generator()
     try:
         await job_store.mark_running(job_id)
-        async for chunk in _get_report_generator().generate_report_stream(
+
+        # ── Stage 1: Researcher (Flash + Google Search) ────────────────
+        await job_store.append_phase(job_id, "researching")
+        bullets = await report_gen.research(
             topic=body.topic,
             framework_id=body.framework_id,
             mindmap_tree=body.mindmap_tree,
             language=body.language,
             api_key=api_key,
+        )
+        if bullets:
+            await job_store.append_text(
+                job_id,
+                f"**참고 자료**\n\n{bullets}\n\n---\n\n",
+            )
+
+        # ── Stage 2: Writer (Pro 3.1 + reasoning HIGH) ─────────────────
+        await job_store.append_phase(job_id, "writing")
+        async for chunk in report_gen.write_stream(
+            topic=body.topic,
+            framework_id=body.framework_id,
+            mindmap_tree=body.mindmap_tree,
+            language=body.language,
+            research_bullets=bullets,
+            api_key=api_key,
         ):
             if chunk:
-                await job_store.append_chunk(job_id, chunk)
+                await job_store.append_text(job_id, chunk)
+
         # Success: set terminal status BEFORE flipping the stream-done flag,
         # so a forwarder that wakes between the two calls still sees a
         # consistent "running" state instead of a status-less "done".
@@ -199,7 +229,9 @@ async def stream_job(job_id: str, request: Request):
         cursor = 0
 
     POLL_INTERVAL_SECONDS = 0.5
-    MAX_IDLE_SECONDS = 60.0  # bail out if no new chunks arrive for this long
+    # Researcher step (Google Search) can sit silent for 20-30s, so the
+    # idle limit needs headroom past that or healthy reports get killed.
+    MAX_IDLE_SECONDS = 90.0
 
     async def event_stream():
         nonlocal cursor
@@ -214,10 +246,17 @@ async def stream_job(job_id: str, request: Request):
                     idle = 0.0
                     for chunk in chunks:
                         cursor += 1
-                        payload = json.dumps(
-                            {"text": chunk, "cursor": cursor},
-                            ensure_ascii=False,
-                        )
+                        # Each chunk is already a JSON envelope:
+                        #   {"type": "text", "text": "..."}
+                        #   {"type": "phase", "phase": "researching"|"writing"}
+                        # Decode so we can attach the cursor; fall back to a
+                        # plain text envelope if the row is somehow malformed.
+                        try:
+                            envelope = json.loads(chunk)
+                        except (ValueError, TypeError):
+                            envelope = {"type": "text", "text": chunk}
+                        envelope["cursor"] = cursor
+                        payload = json.dumps(envelope, ensure_ascii=False)
                         yield f"data: {payload}\n\n"
 
                 # Check terminal state AFTER draining chunks so we don't

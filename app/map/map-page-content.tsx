@@ -111,7 +111,6 @@ export default function MapPageContent() {
         language,
         contextVector,
         intentMode,
-        expansionMode,
         setRootNode,
         setTopic,
         setMindmapId,
@@ -339,9 +338,10 @@ export default function MapPageContent() {
                 // and intent. Both optional — backend degrades cleanly.
                 ...(contextVector ? { context_vector: contextVector } : {}),
                 ...(intentMode ? { intent_mode: intentMode } : {}),
-                // Phase 2: user-selected mode (always present in store,
-                // default = "default" which the backend treats as no-op).
-                expansion_mode: expansionMode,
+                // Mode is auto-picked by the backend based on depth (L1
+                // → mece, L2-L3 → default, L4 → diverse). We don't send
+                // expansion_mode so the strategy registry's depth-based
+                // auto-select kicks in.
             }
 
             const response = await expandNode(request)
@@ -390,13 +390,7 @@ export default function MapPageContent() {
                 })
             } else {
                 const baseDesc = `${returnedChildren.length}개 하위 항목 추가됨`
-                const titleByMode: Record<string, string> = {
-                    default: '아이디어 확장 완료!',
-                    diverse: '다양한 관점으로 확장 완료!',
-                    deep: '깊이있게 확장 완료!',
-                    mece: '핵심만 추려서 확장 완료!',
-                }
-                toast.success(titleByMode[expansionMode] ?? titleByMode.default, {
+                toast.success('아이디어 확장 완료!', {
                     description: isDebug && typeof seed === 'number'
                         ? `${baseDesc} · seed=${seed}`
                         : baseDesc,
@@ -415,7 +409,6 @@ export default function MapPageContent() {
         language,
         contextVector,
         intentMode,
-        expansionMode,
         isDebug,
         searchParams,
         setExpanding,

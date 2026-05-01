@@ -364,30 +364,29 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
         const { rootNode, currentNode, mindmapId, frameworkId, topic } = get()
         if (!rootNode) return null
 
-        // 새 노드 ID 생성 (UUID 형식)
         const randomPart = Math.random().toString(36).slice(2, 11)
         const newNodeId = `node-${Date.now()}-${randomPart}`
 
-        // 새 노드 객체 생성 (빈 라벨)
+        // 빈 라벨로 생성 + 즉시 편집 모드 진입. 사용자가 아무것도 입력하지
+        // 않고 blur 하면 onBlur 핸들러에서 "새 아이디어"로 자동 채워짐.
         const newNode: MindmapNode = {
             id: newNodeId,
-            label: '',  // 빈 라벨로 생성
+            label: '',
             type: 'manual',
-            children: []
+            children: [],
         }
 
-        // 부모 노드를 찾아서 자식으로 추가
         const addToParent = (node: MindmapNode): MindmapNode => {
             if (node.id === parentId) {
                 return {
                     ...node,
-                    children: [...(node.children || []), newNode]
+                    children: [...(node.children || []), newNode],
                 }
             }
             if (!node.children) return node
             return {
                 ...node,
-                children: node.children.map(addToParent)
+                children: node.children.map(addToParent),
             }
         }
 
@@ -397,7 +396,7 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
         set({
             rootNode: updatedRoot,
             currentNode: updatedCurrent,
-            editingNodeId: newNodeId  // 새 노드를 편집 모드로 설정
+            editingNodeId: newNodeId,
         })
         persistTree(mindmapId, updatedRoot, { frameworkId, topic })
 

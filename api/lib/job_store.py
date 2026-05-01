@@ -188,11 +188,31 @@ async def chunk_count(job_id: str) -> int:
 
 
 async def mark_stream_done(job_id: str) -> None:
+    """Signal that the chunk producer is finished — flips the :done sentinel
+    so the SSE forwarder knows when to stop tailing.
+
+    Does NOT touch the hash status field. Callers must invoke
+    set_done()/set_error() explicitly to set the terminal status; otherwise
+    an error already recorded by set_error() would be silently overwritten.
+    """
     redis = _get_redis()
     if redis is None:
         return
     await redis.set(f"job:{job_id}:done", "1", ex=JOB_TTL_SECONDS)
-    # Also flip the hash status so /jobs/{id} reflects completion.
+
+
+async def set_done(job_id: str) -> None:
+    """Mark a streaming job's terminal status as done (no result body).
+
+    Refuses to downgrade an existing 'error' status, so a race between
+    set_error() and set_done() can't lose the error signal.
+    """
+    redis = _get_redis()
+    if redis is None:
+        return
+    current = await redis.hget(f"job:{job_id}", "status")
+    if current == "error":
+        return
     await redis.hset(f"job:{job_id}", values={
         "status": "done",
         "updated_at": str(int(time.time())),

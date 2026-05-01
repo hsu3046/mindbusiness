@@ -136,11 +136,18 @@ async def _run_report_job(
         ):
             if chunk:
                 await job_store.append_chunk(job_id, chunk)
+        # Success: set terminal status BEFORE flipping the stream-done flag,
+        # so a forwarder that wakes between the two calls still sees a
+        # consistent "running" state instead of a status-less "done".
+        await job_store.set_done(job_id)
         await job_store.mark_stream_done(job_id)
     except Exception as exc:
         logger.exception("Report job %s failed", job_id)
+        # set_error must run BEFORE mark_stream_done — set_done would skip
+        # the overwrite once 'error' is set, but mark_stream_done no longer
+        # touches the status field at all, so order here is purely about the
+        # forwarder seeing the error payload before it sees [DONE].
         await job_store.set_error(job_id, str(exc))
-        # Still mark stream done so the SSE forwarder can stop gracefully.
         await job_store.mark_stream_done(job_id)
 
 

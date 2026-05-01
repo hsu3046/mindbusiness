@@ -189,7 +189,34 @@ function persistTree(
 export const useMindmapStore = create<MindmapStore>((set, get) => ({
     ...initialState,
 
-    setMindmapId: (mindmapId) => set({ mindmapId }),
+    setMindmapId: (mindmapId) => {
+        const currentId = get().mindmapId
+        // Switching to a different id = new session. Clear the previous
+        // session's tree-related state so /map's loader useEffect doesn't
+        // short-circuit on the stale `rootNode` guard. Without this, the
+        // loader sees a non-null rootNode left over from the previous
+        // session, returns early, and never builds the new tree from
+        // localStorage.mindmap_l1_labels — the user sees the old tree's
+        // children with the new id's URL, no tree-cache write, and the
+        // l1_labels never get cleaned up.
+        // Preferences (language, expansionMode), DNA (contextVector), and
+        // intent are kept — they're either user prefs or about to be
+        // overwritten by the home page's pre-seed for the new session.
+        if (currentId !== null && currentId !== mindmapId) {
+            set({
+                mindmapId,
+                rootNode: null,
+                currentNode: null,
+                contextPath: [],
+                nodeHistory: [],
+                expandingNodeId: null,
+                editingNodeId: null,
+                deletedNodeBackup: null,
+            })
+            return
+        }
+        set({ mindmapId })
+    },
     setTopic: (topic) => set({ topic }),
     setFrameworkId: (frameworkId) => set({ frameworkId }),
 

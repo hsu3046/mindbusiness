@@ -11,12 +11,13 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY, MODEL_REASONING, get_frameworks_for_intent
+from config import GEMINI_API_KEY, get_frameworks_for_intent
 from schemas.intent_schema import FrameworkDecision, MissingInfoType
 from schemas.context_vector import ContextVector
 from logic.dna_sanitizer import sanitize_dna, needs_clarification_for_target
 from lib.json_utils import safe_json_parse
 from lib.text_utils import strip_markdown
+from lib.gemini_config import build_config, get_model
 
 logger = logging.getLogger(__name__)
 
@@ -215,15 +216,12 @@ class IntentClassifier:
             
             logger.info("Classifier analyzing intent (lang=%s, input_len=%d)", user_language, len(user_input))
 
-            # 3. Call Gemini Pro with JSON Mode
+            # 3. Call Gemini with JSON Mode (model + reasoning level from STAGE_CONFIG["classify"])
             client = self._get_client(api_key)
             response = await client.aio.models.generate_content(
-                model=MODEL_REASONING,
+                model=get_model("classify"),
                 contents=full_prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.1,  # Low temperature for consistent reasoning
-                )
+                config=build_config("classify", response_mime_type="application/json"),
             )
 
             # 4. Parse and validate response
@@ -670,12 +668,10 @@ class SmartClassifier:
         full_prompt = f"{prompt}\n\n[USER INPUT]\n{combined_input}"
 
         response = await client.aio.models.generate_content(
-            model=MODEL_REASONING,
+            model=get_model("dna_extract"),
             contents=full_prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.1,
-            )
+            config=build_config("dna_extract", response_mime_type="application/json",
+                                 temperature_override=0.1),
         )
 
         data = safe_json_parse(response.text)
@@ -710,12 +706,9 @@ class SmartClassifier:
         )
 
         response = await client.aio.models.generate_content(
-            model=MODEL_REASONING,
+            model=get_model("dna_extract"),
             contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.2,
-            )
+            config=build_config("dna_extract", response_mime_type="application/json"),
         )
 
         data = safe_json_parse(response.text)
@@ -774,12 +767,9 @@ class SmartClassifier:
         )
 
         response = await client.aio.models.generate_content(
-            model=MODEL_REASONING,
+            model=get_model("dna_extract"),
             contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.2,
-            )
+            config=build_config("dna_extract", response_mime_type="application/json"),
         )
 
         data = safe_json_parse(response.text)

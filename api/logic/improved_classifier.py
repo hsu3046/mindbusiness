@@ -22,8 +22,9 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY, MODEL_REASONING, get_frameworks_for_intent
+from config import GEMINI_API_KEY, get_frameworks_for_intent
 from lib.json_utils import safe_json_parse
+from lib.gemini_config import build_config, get_model
 
 logger = logging.getLogger(__name__)
 
@@ -628,12 +629,9 @@ Respond in JSON format:
 """
     
     response = await client.aio.models.generate_content(
-        model=MODEL_REASONING,
+        model=get_model("framework_pick"),
         contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.2,
-        )
+        config=build_config("framework_pick", response_mime_type="application/json"),
     )
 
     return safe_json_parse(response.text)
@@ -807,12 +805,9 @@ Respond in JSON:
 """
 
         response = await client.aio.models.generate_content(
-            model=MODEL_REASONING,
+            model=get_model("framework_fallback"),
             contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.1,
-            )
+            config=build_config("framework_fallback", response_mime_type="application/json"),
         )
 
         data = safe_json_parse(response.text)

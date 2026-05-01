@@ -14,9 +14,10 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY, MODEL_GENERATION
+from config import GEMINI_API_KEY
 from schemas.expand_schema import ExpandRequest, ExpandResponse
 from lib.json_utils import safe_json_parse
+from lib.gemini_config import build_config, get_model
 
 logger = logging.getLogger(__name__)
 
@@ -107,15 +108,15 @@ class NodeExpander:
                 request, generate_count, force_logic_tree
             )
 
-            # 5. Call Gemini Flash
+            # 5. Call Gemini Flash (model + temperature from STAGE_CONFIG["expand"])
             response = await client.aio.models.generate_content(
-                model=MODEL_GENERATION,
+                model=get_model("expand"),
                 contents=user_contents,
-                config=types.GenerateContentConfig(
+                config=build_config(
+                    "expand",
                     response_mime_type="application/json",
-                    temperature=0.6,
                     system_instruction=system_instruction,
-                )
+                ),
             )
 
             # 6. Parse and validate

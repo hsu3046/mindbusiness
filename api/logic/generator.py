@@ -13,10 +13,11 @@ from typing import Optional, List, Dict
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY, MODEL_GENERATION
+from config import GEMINI_API_KEY
 from schemas.mindmap_schema import MindmapResponse, MindmapNode
 from schemas.context_vector import ContextVector
 from lib.json_utils import safe_json_parse
+from lib.gemini_config import build_config, get_model
 
 logger = logging.getLogger(__name__)
 
@@ -244,14 +245,11 @@ class MindmapGenerator:
         # Add L2 count instruction
         formatted_prompt += f"\n\n[IMPORTANT] Generate exactly {l2_count} children nodes. No more, no less."
 
-        # Call Gemini Flash
+        # Call Gemini Flash (model + temperature from STAGE_CONFIG["generate_l1"])
         response = await client.aio.models.generate_content(
-            model=MODEL_GENERATION,
+            model=get_model("generate_l1"),
             contents=formatted_prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.4,
-            )
+            config=build_config("generate_l1", response_mime_type="application/json"),
         )
         
         # Parse response
@@ -322,11 +320,11 @@ class MindmapGenerator:
         user_contents = f"<<<USER_INPUT>>>\n{topic}\n<<<END_USER_INPUT>>>"
 
         response = await client.aio.models.generate_content(
-            model=MODEL_GENERATION,
+            model=get_model("generate_l1"),
             contents=user_contents,
-            config=types.GenerateContentConfig(
+            config=build_config(
+                "generate_l1",
                 response_mime_type="application/json",
-                temperature=0.4,
                 system_instruction=system_instruction,
             )
         )

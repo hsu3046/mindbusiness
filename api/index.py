@@ -135,11 +135,12 @@ async def validate_api_key(request: Request):
     
     try:
         from google import genai
-        from config import MODEL_GENERATION
+        from lib.gemini_config import get_model
         client = genai.Client(api_key=api_key)
-        # Lightweight test using the configured generation model
+        # Use the cheapest/fastest model for the round-trip — this only needs
+        # to confirm the key authenticates, not exercise reasoning.
         await client.aio.models.generate_content(
-            model=MODEL_GENERATION,
+            model=get_model("validate_key"),
             contents="Say 'ok' in one word.",
         )
         return {"valid": True, "message": "API key is valid."}

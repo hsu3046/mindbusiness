@@ -25,7 +25,7 @@ const INTENT_OPTIONS: IntentOption[] = [
         question: (
             <>
                 어떤 <strong className="font-semibold text-slate-800">아이디어</strong>를<br />
-                <strong className="font-semibold text-slate-800">구체적 계획</strong>으로 만들고 싶으세요?
+                <strong className="font-semibold text-slate-800">구체적인 계획</strong>으로 만들까요?
             </>
         )
     },
@@ -35,7 +35,9 @@ const INTENT_OPTIONS: IntentOption[] = [
         icon: AiSearch02Icon,
         question: (
             <>
-                지금 겪고 계신 어떤 <strong className="font-semibold text-slate-800">문제의<br />원인</strong>을 찾고 싶으세요?
+                지금 겪고 있는<br />
+                어떤 <strong className="font-semibold text-slate-800">문제</strong>를{" "}
+                <strong className="font-semibold text-slate-800">해결</strong>할까요?
             </>
         )
     },
@@ -45,7 +47,8 @@ const INTENT_OPTIONS: IntentOption[] = [
         icon: JusticeScale01Icon,
         question: (
             <>
-                어떤 선택지들 중에서<br /><strong className="font-semibold text-slate-800">최선의 결정</strong>을 내리고 싶으세요?
+                어떤 <strong className="font-semibold text-slate-800">선택지들</strong>과<br />
+                <strong className="font-semibold text-slate-800">고민</strong>을 하고 있나요?
             </>
         )
     },
@@ -55,7 +58,8 @@ const INTENT_OPTIONS: IntentOption[] = [
         icon: Flag01Icon,
         question: (
             <>
-                앞으로의 어떤 <strong className="font-semibold text-slate-800">목표</strong>를 세우거나<br /><strong className="font-semibold text-slate-800">회고</strong>하고 싶으세요?
+                어떤 <strong className="font-semibold text-slate-800">목표</strong>를 세우거나<br />
+                <strong className="font-semibold text-slate-800">점검</strong>하고 싶으세요?
             </>
         )
     }
@@ -174,10 +178,21 @@ export function HeroInput({ topic, onTopicChange, onSubmit, intentMode, onIntent
                 ease: [0.25, 0.46, 0.45, 0.94],
                 delay: 0.1
             }}
-            className="flex flex-col items-center"
+            className="flex w-full flex-col items-center"
         >
+            {/* Dynamic Title based on Intent */}
+            <motion.h1
+                key={intentMode}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+                className="mb-8 text-center text-2xl font-light tracking-tight text-slate-700 md:text-3xl px-4"
+            >
+                {currentIntent.question}
+            </motion.h1>
+
             {/* Intent Mode Selector */}
-            <div className="mb-8 grid grid-cols-2 md:flex md:flex-wrap md:justify-center gap-2">
+            <div className="mb-4 grid grid-cols-2 md:flex md:flex-wrap md:justify-center gap-2">
                 {INTENT_OPTIONS.map((option) => (
                     <button
                         key={option.id}
@@ -192,17 +207,6 @@ export function HeroInput({ topic, onTopicChange, onSubmit, intentMode, onIntent
                     </button>
                 ))}
             </div>
-
-            {/* Dynamic Title based on Intent */}
-            <motion.h1
-                key={intentMode}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-                className="mb-4 text-center text-2xl font-light tracking-tight text-slate-700 md:text-3xl px-4"
-            >
-                {currentIntent.question}
-            </motion.h1>
 
             {/* Textarea Form with Shake Animation */}
             <motion.form

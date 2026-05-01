@@ -4,31 +4,21 @@ import { useRef } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { HugeiconsIcon } from "@hugeicons/react"
-import {
-    Download04Icon,
-    Upload04Icon,
-    ArrowDown01Icon,
-} from "@hugeicons/core-free-icons"
+import { Download04Icon, Upload04Icon } from "@hugeicons/core-free-icons"
 
 import { Button } from "@/components/ui/button"
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { useMindmapStore } from "@/stores/mindmap-store"
+import { generateMindmapId } from "@/lib/tree-cache"
 import {
     downloadAsFile,
     parseByFilename,
     safeFilename,
-    treeToJSON,
     treeToOPML,
 } from "@/lib/mindmap-format"
 import type { MindmapNode } from "@/types/mindmap"
 
 interface SaveLoadButtonsProps {
-    /** Hides the Save dropdown when there's nothing to save (e.g., on the home page). */
+    /** Hides the Save button when there's nothing to save (e.g., on the home page). */
     showSave?: boolean
     /** Override the post-load destination. Default: navigate to /map with the loaded topic+framework. */
     onLoadOverride?: (parsed: {
@@ -41,8 +31,10 @@ interface SaveLoadButtonsProps {
 /**
  * Save / Load buttons for the mindmap tree.
  *
- * Save → dropdown with OPML / JSON.
- * Load → file picker (auto-detects OPML vs JSON by extension).
+ * Save → downloads an OPML file (lossless via `_`-prefix user attributes;
+ *        also opens cleanly in third-party mindmap apps).
+ * Load → file picker; auto-detects by extension and still accepts legacy
+ *        JSON exports for backward-compat.
  *
  * When loading from the home page, navigates the user to /map. When
  * loading from inside /map (or via `onLoadOverride`) it just swaps the
@@ -61,8 +53,10 @@ export function SaveLoadButtons({
     const topic = useMindmapStore((s) => s.topic)
     const setRootNode = useMindmapStore((s) => s.setRootNode)
     const setTopic = useMindmapStore((s) => s.setTopic)
+    const setMindmapId = useMindmapStore((s) => s.setMindmapId)
+    const setFrameworkId = useMindmapStore((s) => s.setFrameworkId)
 
-    const handleSave = (format: "json" | "opml") => {
+    const handleSave = () => {
         if (!rootNode) {
             toast.error("저장할 마인드맵이 없습니다.")
             return
@@ -75,13 +69,13 @@ export function SaveLoadButtons({
                 : "LOGIC"
         const labelForFile = topic || rootNode.label || "mindmap"
 
-        const content =
-            format === "json"
-                ? treeToJSON(labelForFile, frameworkId, rootNode)
-                : treeToOPML(labelForFile, frameworkId, rootNode)
-        const mime = format === "json" ? "application/json" : "text/xml"
-        downloadAsFile(safeFilename(labelForFile, format), content, mime)
-        toast.success(`${format.toUpperCase()} 파일로 저장했어요`)
+        // OPML round-trips every MindmapNode field via `_`-prefix user
+        // attributes, so a single format covers both interop with other
+        // mindmap apps and re-import into this one — no need to make the
+        // user pick.
+        const content = treeToOPML(labelForFile, frameworkId, rootNode)
+        downloadAsFile(safeFilename(labelForFile, "opml"), content, "text/xml")
+        toast.success("마인드맵을 저장했어요")
     }
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -98,11 +92,20 @@ export function SaveLoadButtons({
                 toast.success("마인드맵을 불러왔어요")
                 return
             }
-            // Default: load into store + navigate to /map.
+            // Default: assign a fresh id, seed store, navigate to /map?id=.
+            // setRootNode triggers persistTree() which writes the imported
+            // tree to localStorage under the new id, so a refresh on the
+            // /map page will recover it from cache. Order matters: set the
+            // framework + topic first so the persistTree() inside
+            // setRootNode picks them up and the recent-maps list renders
+            // the correct framework badge / re-open URL.
+            const newId = generateMindmapId()
+            setMindmapId(newId)
+            setFrameworkId(parsed.framework_id)
             setTopic(parsed.topic)
             setRootNode(parsed.root)
             router.push(
-                `/map?topic=${encodeURIComponent(parsed.topic)}&framework=${encodeURIComponent(
+                `/map?id=${newId}&framework=${encodeURIComponent(
                     parsed.framework_id,
                 )}&loaded=1`,
             )
@@ -117,31 +120,15 @@ export function SaveLoadButtons({
     return (
         <div className="flex items-center gap-2">
             {showSave && (
-                <DropdownMenu>
-                    <DropdownMenuTrigger
-                        render={
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="flex items-center gap-1.5"
-                            />
-                        }
-                    >
-                        <HugeiconsIcon icon={Download04Icon} size={16} />
-                        <span className="text-sm font-medium">저장</span>
-                        <HugeiconsIcon icon={ArrowDown01Icon} size={14} />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="min-w-[180px]">
-                        <DropdownMenuItem onClick={() => handleSave("opml")}>
-                            <span className="font-mono text-xs text-slate-400">.opml</span>
-                            <span className="ml-2 text-sm">다른 도구로 가져가기</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleSave("json")}>
-                            <span className="font-mono text-xs text-slate-400">.json</span>
-                            <span className="ml-2 text-sm">백업 / 복원용</span>
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSave}
+                    className="flex items-center gap-1.5"
+                >
+                    <HugeiconsIcon icon={Download04Icon} size={16} />
+                    <span className="text-sm font-medium">다운로드</span>
+                </Button>
             )}
 
             <Button

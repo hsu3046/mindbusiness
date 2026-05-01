@@ -54,7 +54,7 @@ export function jsonToTree(content: string): ParsedMindmap {
         throw new Error(`지원하지 않는 파일 버전: ${env.version}`)
     }
     if (!env.root || !env.root.id || env.root.label === undefined) {
-        throw new Error("root 노드 정보가 없습니다.")
+        throw new Error("최상위 아이디어 정보가 없습니다.")
     }
     return {
         topic: env.topic ?? "불러온 마인드맵",
@@ -95,11 +95,14 @@ export function treeToOPML(topic: string, frameworkId: string, root: MindmapNode
 
     // The framework_id rides on the root outline as a user attribute so
     // the OPML head stays spec-compliant (head only takes standard fields).
+    // _export_version is the migration anchor for future schema changes —
+    // opmlToTree() can branch on it the way the JSON envelope used to.
     const rootAttrs: string[] = [
         `text="${xmlEscape(root.label || topic)}"`,
         `_id="${xmlEscape(root.id)}"`,
         `_framework_id="${xmlEscape(frameworkId)}"`,
         `_topic="${xmlEscape(topic)}"`,
+        `_export_version="1"`,
     ]
     if (root.type) rootAttrs.push(`_type="${xmlEscape(root.type)}"`)
     if (root.description) rootAttrs.push(`_description="${xmlEscape(root.description)}"`)

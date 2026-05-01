@@ -11,6 +11,24 @@ interface DeletedNodeBackup {
     index: number  // 부모 내 위치
 }
 
+/** Languages the AI pipeline currently supports as input/output. */
+export type AppLanguage = 'Korean' | 'English' | 'Japanese'
+
+const LANGUAGE_STORAGE_KEY = 'mindbusiness_language'
+const DEFAULT_LANGUAGE: AppLanguage = 'Korean'
+
+/** Read the persisted language pref (SSR-safe). */
+function readPersistedLanguage(): AppLanguage {
+    if (typeof window === 'undefined') return DEFAULT_LANGUAGE
+    try {
+        const v = window.localStorage.getItem(LANGUAGE_STORAGE_KEY)
+        if (v === 'Korean' || v === 'English' || v === 'Japanese') return v
+    } catch {
+        // localStorage may be unavailable (private mode etc) — fall through
+    }
+    return DEFAULT_LANGUAGE
+}
+
 interface MindmapStore {
     // Data
     rootNode: MindmapNode | null
@@ -19,6 +37,12 @@ interface MindmapStore {
     contextPath: string[]
     /** Topic key used to persist the tree to tree-cache. Set when the map page mounts. */
     topic: string | null
+    /**
+     * UI/AI language — flows into ExpandRequest.language so generated children
+     * match the user's preference. Persisted to localStorage so it survives
+     * refresh; default Korean. Settable via setLanguage.
+     */
+    language: AppLanguage
 
     // Delete/Undo State
     deletedNodeBackup: DeletedNodeBackup | null
@@ -31,6 +55,7 @@ interface MindmapStore {
 
     // Actions
     setTopic: (topic: string | null) => void
+    setLanguage: (language: AppLanguage) => void
     setRootNode: (node: MindmapNode) => void
     setCurrentNode: (node: MindmapNode) => void
     navigateTo: (node: MindmapNode) => void
@@ -41,7 +66,17 @@ interface MindmapStore {
     setExpanding: (nodeId: string | null) => void
     setEditingNodeId: (nodeId: string | null) => void  // 편집 모드 설정
     setLoading: (loading: boolean) => void
-    expandNode: (nodeId: string, children: MindmapNode[]) => void
+    /**
+     * Replace a node's children with the result of an expansion. When
+     * `appliedFrameworkId` is set, also stamp it onto the target node so
+     * subsequent expansions of any descendant can recover the full
+     * frameworks-in-path list (Phase 0 fix for the broken nesting check).
+     */
+    expandNode: (
+        nodeId: string,
+        children: MindmapNode[],
+        appliedFrameworkId?: string | null,
+    ) => void
     addChildNode: (parentId: string) => MindmapNode | null  // 수동 자식 노드 추가 (빈 라벨)
     updateNodeLabel: (nodeId: string, label: string) => void  // 노드 라벨 업데이트
     deleteNode: (nodeId: string) => boolean  // 삭제 성공 여부 반환
@@ -56,6 +91,7 @@ const initialState = {
     nodeHistory: [],
     contextPath: [],
     topic: null as string | null,
+    language: readPersistedLanguage(),
     deletedNodeBackup: null as DeletedNodeBackup | null,
     viewMode: 'mindmap' as ViewMode,
     expandingNodeId: null,
@@ -77,6 +113,17 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
     ...initialState,
 
     setTopic: (topic) => set({ topic }),
+
+    setLanguage: (language) => {
+        set({ language })
+        if (typeof window !== 'undefined') {
+            try {
+                window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language)
+            } catch {
+                // private mode etc — silently skip persist
+            }
+        }
+    },
 
     setRootNode: (node) => {
         set({
@@ -154,14 +201,21 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
 
     setLoading: (loading) => set({ isLoading: loading }),
 
-    expandNode: (nodeId, children) => {
+    expandNode: (nodeId, children, appliedFrameworkId) => {
         const { rootNode, currentNode, topic } = get()
         if (!rootNode || !currentNode) return
 
-        // Recursively update node with children
+        // Recursively update node with children. When the AI applied a
+        // framework, also stamp `applied_framework_id` onto the target node
+        // so future expansions of any descendant can collect the full list
+        // of frameworks-in-path (used_frameworks accumulation).
         const updateNodeChildren = (node: MindmapNode): MindmapNode => {
             if (node.id === nodeId) {
-                return { ...node, children }
+                const next: MindmapNode = { ...node, children }
+                if (appliedFrameworkId) {
+                    next.applied_framework_id = appliedFrameworkId
+                }
+                return next
             }
             return {
                 ...node,

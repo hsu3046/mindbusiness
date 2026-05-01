@@ -80,6 +80,18 @@ class ExpandRequest(BaseModel):
         pattern="^(Korean|English|Japanese)$"
     )
 
+    seed: Optional[int] = Field(
+        None,
+        description=(
+            "Optional Gemini sampling seed for reproducibility — passing the "
+            "same seed (with the same context) returns identical children. "
+            "Used by debug/A-B tooling and CI golden-output tests; left "
+            "empty for normal stochastic generation."
+        ),
+        ge=0,
+        le=2_147_483_647,  # signed int32 ceiling (Gemini SDK accepts up to this)
+    )
+
 
 class ExpandResponse(BaseModel):
     """Response from node expansion."""

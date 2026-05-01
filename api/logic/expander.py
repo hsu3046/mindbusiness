@@ -16,7 +16,7 @@ from google.genai import types
 
 from config import GEMINI_API_KEY
 from schemas.expand_schema import ExpandRequest, ExpandResponse
-from lib.json_utils import safe_json_parse
+from lib.json_utils import safe_json_parse_tracked
 from lib.gemini_config import build_config, get_model
 
 logger = logging.getLogger(__name__)
@@ -108,7 +108,13 @@ class NodeExpander:
                 request, generate_count, force_logic_tree
             )
 
-            # 5. Call Gemini Flash (model + temperature from STAGE_CONFIG["expand"])
+            # 5. Call Gemini Flash (model + temperature from STAGE_CONFIG["expand"]).
+            #    `seed` (optional) is forwarded to GenerateContentConfig via the
+            #    `**extra` passthrough — None = standard stochastic, integer =
+            #    deterministic for debug/A-B/CI golden-output tests.
+            extra: dict = {}
+            if request.seed is not None:
+                extra["seed"] = request.seed
             response = await client.aio.models.generate_content(
                 model=get_model("expand"),
                 contents=user_contents,
@@ -116,12 +122,13 @@ class NodeExpander:
                     "expand",
                     response_mime_type="application/json",
                     system_instruction=system_instruction,
+                    **extra,
                 ),
             )
 
-            # 6. Parse and validate
+            # 6. Parse and validate (track recovery for telemetry).
             json_str = response.text
-            data = safe_json_parse(json_str)
+            data, parse_recovery = safe_json_parse_tracked(json_str)
             children = data.get("children", [])
 
             # 7. Post-process: adjust count
@@ -142,6 +149,24 @@ class NodeExpander:
 
             # Validate with Pydantic
             validated_result = ExpandResponse.model_validate(data)
+
+            # 9. Telemetry — one structured line per expansion.
+            #    Read by Phase 0 baseline measurement (parse_recovery rate,
+            #    returned/requested ratio, confidence distribution).
+            logger.info(
+                "expand_telemetry depth=%d framework=%s used=%s requested=%d returned=%d "
+                "confidence=%.2f language=%s parse_recovery=%s seed=%s applied=%s",
+                request.current_depth,
+                request.current_framework_id,
+                ",".join(request.used_frameworks) if request.used_frameworks else "-",
+                generate_count,
+                len(children),
+                validated_result.confidence_score,
+                request.language,
+                parse_recovery,
+                request.seed if request.seed is not None else "-",
+                validated_result.applied_framework_id or "-",
+            )
 
             return validated_result.model_dump()
 

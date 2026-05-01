@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useSearchParams } from "next/navigation"
 import { MindmapCanvas } from "@/components/mindmap/mindmap-canvas"
 import { ReportPanel } from "@/components/mindmap/report-panel"
@@ -58,6 +58,34 @@ function getParentSiblingLabels(
         .map(c => c.label)
 }
 
+/**
+ * Walk every ancestor of `targetId` (excluding the target itself) and
+ * collect their `applied_framework_id`s in path order, deduplicated.
+ *
+ * Phase 0 fix: previously the frontend hardcoded `used_frameworks` to
+ * `[rootFramework]`, so the backend's MAX_FRAMEWORK_NESTING check was
+ * effectively disabled at depth ≥ 2. The store now stamps the applied
+ * framework on the target node when an expansion returns one, so each
+ * subsequent expansion can read the full chain from the tree itself.
+ */
+function collectAncestorFrameworks(
+    root: MindmapNode,
+    targetId: string,
+): string[] {
+    const out: string[] = []
+    const seen = new Set<string>()
+    let { parent } = findNodeWithParent(root, targetId)
+    while (parent) {
+        if (parent.applied_framework_id && !seen.has(parent.applied_framework_id)) {
+            out.unshift(parent.applied_framework_id)
+            seen.add(parent.applied_framework_id)
+        }
+        const next = findNodeWithParent(root, parent.id)
+        parent = next.parent
+    }
+    return out
+}
+
 export default function MapPageContent() {
     const searchParams = useSearchParams()
     const topic = searchParams.get('topic') || ''
@@ -75,6 +103,7 @@ export default function MapPageContent() {
         contextPath,
         expandingNodeId,
         isLoading,
+        language,
         setRootNode,
         setTopic,
         navigateTo,
@@ -82,6 +111,16 @@ export default function MapPageContent() {
         setLoading,
         expandNode: storeExpandNode,
     } = useMindmapStore()
+
+    // `?debug=1` exposes hidden affordances (currently the deterministic
+    // seed echo on the success toast). Read once from the URL — this is a
+    // dev/QA flag, not user-facing.
+    const isDebug = searchParams.get('debug') === '1'
+
+    // Ref-trampoline so the "다시 시도" toast action can re-invoke the
+    // current `handleExpand` without the callback referencing itself in
+    // its closure (lint rule: cannot access var before declaration).
+    const handleExpandRef = useRef<((node: MindmapNode) => Promise<void>) | null>(null)
 
     const [reportOpen, setReportOpen] = useState(false)
 
@@ -199,36 +238,55 @@ export default function MapPageContent() {
             const existingChildren = node.children?.map(c => c.label) || []
 
             // Calculate depth based on tree position
-            const { parent: nodeParent } = findNodeWithParent(rootNode, node.id)
             let depth = 0
-            let current = nodeParent
+            let current = parent
             while (current) {
                 depth++
                 const result = findNodeWithParent(rootNode, current.id)
                 current = result.parent
             }
 
+            // Collect frameworks already applied along the ancestor chain.
+            // The root framework is always present; ancestors that the AI
+            // wrapped in a sub-framework (PERSONA, SWOT, …) contribute too.
+            const ancestorFrameworks = collectAncestorFrameworks(rootNode, node.id)
+            const usedFrameworks = Array.from(
+                new Set([framework, ...ancestorFrameworks]),
+            )
+
+            // `?debug=1` URLs may include `&seed=N` to pin Gemini sampling.
+            const seedParam = searchParams.get('seed')
+            const seed = isDebug && seedParam
+                ? Number.parseInt(seedParam, 10)
+                : undefined
+
             const request: ExpandRequest = {
                 topic: rootNode.label,
                 context_path: [...contextPath, node.label],
                 target_node_label: node.label,
                 current_framework_id: framework,
-                used_frameworks: [framework],
+                used_frameworks: usedFrameworks,
                 current_depth: depth,
                 sibling_labels: siblingLabels,
                 parent_sibling_labels: parentSiblingLabels,
                 existing_children: existingChildren,
-                language: 'Korean'
+                language,
+                ...(typeof seed === 'number' && Number.isFinite(seed) ? { seed } : {}),
             }
 
             const response = await expandNode(request)
 
             // Add mode: merge existing children with new ones
+            const returnedChildren = response.children as MindmapNode[]
             const newChildren = [
                 ...(node.children || []),
-                ...response.children as MindmapNode[]
+                ...returnedChildren,
             ]
-            storeExpandNode(node.id, newChildren)
+            storeExpandNode(
+                node.id,
+                newChildren,
+                response.applied_framework_id ?? null,
+            )
 
             // Save tree to cache
             const updatedRoot = useMindmapStore.getState().rootNode
@@ -236,18 +294,58 @@ export default function MapPageContent() {
                 saveTree(topic, updatedRoot)
             }
 
-            toast.success('노드 확장 완료!', {
-                description: `${response.children.length}개 하위 항목 추가됨`
-            })
+            // Low confidence OR clearly insufficient children → warn the
+            // user with a "다시 시도" action instead of silently swallowing.
+            // We don't surface the backend's chosen target count today, so
+            // "insufficient" is anchored at < 2 children — a hard floor that
+            // any layer would consider a failure.
+            const tooFew = returnedChildren.length < 2
+            const lowConfidence =
+                typeof response.confidence_score === 'number' &&
+                response.confidence_score < 0.6
+            if (tooFew || lowConfidence) {
+                const reason = lowConfidence
+                    ? `신뢰도가 낮아요 (${Math.round((response.confidence_score ?? 0) * 100)}%)`
+                    : `${returnedChildren.length}개만 추가됐어요`
+                toast.warning('부분적으로만 확장됐어요', {
+                    description: reason,
+                    action: {
+                        label: '다시 시도',
+                        onClick: () => handleExpandRef.current?.(node),
+                    },
+                })
+            } else {
+                const baseDesc = `${returnedChildren.length}개 하위 항목 추가됨`
+                toast.success('아이디어 확장 완료!', {
+                    description: isDebug && typeof seed === 'number'
+                        ? `${baseDesc} · seed=${seed}`
+                        : baseDesc,
+                })
+            }
         } catch (error) {
             toast.error('확장 실패', {
                 description: error instanceof Error ? error.message : '알 수 없는 오류'
             })
             setExpanding(null)
         }
-    }, [rootNode, contextPath, framework, setExpanding, storeExpandNode, topic])
+    }, [
+        rootNode,
+        contextPath,
+        framework,
+        language,
+        isDebug,
+        searchParams,
+        setExpanding,
+        storeExpandNode,
+        topic,
+    ])
 
-
+    // Keep the trampoline pointing at the current handleExpand so the toast
+    // retry action always invokes the latest closure (deps may have changed
+    // since the toast was emitted).
+    useEffect(() => {
+        handleExpandRef.current = handleExpand
+    }, [handleExpand])
 
     if (isLoading || !currentNode || !rootNode) {
         return null // Suspense will show skeleton

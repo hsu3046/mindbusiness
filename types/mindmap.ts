@@ -16,6 +16,15 @@ export interface MindmapNode {
 
     // Phase 2: Monetization
     recommendations?: RecommendationNode[]
+
+    /**
+     * If the AI applied a specific framework (PERSONA, SWOT, …) when
+     * expanding this node, the framework id is stamped here. Lets later
+     * expansions of any descendant collect the full chain of frameworks
+     * along the path — used by the `used_frameworks` accumulation in
+     * map-page-content's handleExpand to fix the nesting-limit check.
+     */
+    applied_framework_id?: string
 }
 
 export interface RecommendationNode {
@@ -63,6 +72,12 @@ export interface ExpandRequest {
     existing_children?: string[]        // Already existing children (for add mode)
     force_framework?: string
     language: string
+    /**
+     * Optional Gemini sampling seed — pass an integer to make the call
+     * deterministic (debug / A-B / CI golden tests). Omit for normal
+     * stochastic generation.
+     */
+    seed?: number
 }
 
 export interface ExpandResponse {

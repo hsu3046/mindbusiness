@@ -5,59 +5,52 @@ Handles malformed AI-generated JSON responses.
 
 import json
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 
-def safe_json_parse(json_str: str) -> Dict[str, Any]:
+def safe_json_parse_tracked(json_str: str) -> Tuple[Dict[str, Any], bool]:
     """
-    Parse JSON with automatic error recovery.
-    
-    Handles common AI-generated JSON errors:
-    - Comments (// ... or /* ... */)
-    - Trailing commas
-    - Unquoted keys
-    - Extra text before/after JSON
-    
+    Parse JSON with automatic error recovery, reporting whether recovery
+    was needed.
+
+    Same recovery chain as `safe_json_parse`, but returns a `(data, recovered)`
+    tuple where `recovered` is True iff step 1 (raw json.loads) failed and a
+    later step rescued the parse. Telemetry uses this to track how often we
+    fall through to the recovery path.
+
     Args:
         json_str: JSON string (possibly malformed)
-    
+
     Returns:
-        Parsed dictionary
-    
+        (parsed dict, recovered flag)
+
     Raises:
         ValueError: If all recovery attempts fail
-    
-    Examples:
-        >>> safe_json_parse('{"label": "Test",}')  # trailing comma
-        {'label': 'Test'}
-        
-        >>> safe_json_parse('// comment\\n{"label": "Test"}')  # comment
-        {'label': 'Test'}
     """
-    # Step 1: Standard parsing
+    # Step 1: Standard parsing — clean path
     try:
-        return json.loads(json_str)
+        return json.loads(json_str), False
     except json.JSONDecodeError:
         pass
-    
+
     # Step 2: Remove comments
     try:
         # Single-line comments: // ...
         cleaned = re.sub(r'//.*?$', '', json_str, flags=re.MULTILINE)
         # Multi-line comments: /* ... */
         cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
-        return json.loads(cleaned)
+        return json.loads(cleaned), True
     except json.JSONDecodeError:
         pass
-    
+
     # Step 3: Remove trailing commas
     try:
         # Before closing bracket/brace: , }  or  , ]
         cleaned = re.sub(r',(\s*[}\]])', r'\1', json_str)
-        return json.loads(cleaned)
+        return json.loads(cleaned), True
     except json.JSONDecodeError:
         pass
-    
+
     # Step 4: Extract JSON from text
     try:
         # Find first { or [ and last } or ]
@@ -69,25 +62,44 @@ def safe_json_parse(json_str: str) -> Dict[str, Any]:
             (json_str.rfind('}') if '}' in json_str else -1),
             (json_str.rfind(']') if ']' in json_str else -1)
         )
-        
+
         if start < len(json_str) and end > 0:
             extracted = json_str[start:end+1]
-            return json.loads(extracted)
+            return json.loads(extracted), True
     except (json.JSONDecodeError, ValueError):
         pass
-    
+
     # Step 5: Try dirty-json as last resort (optional dependency)
     try:
         import dirty_json
-        return dirty_json.loads(json_str)
+        return dirty_json.loads(json_str), True
     except (ImportError, Exception):
         pass
-    
+
     # All attempts failed
     raise ValueError(
         f"Failed to parse JSON after all recovery attempts. "
         f"First 200 chars: {json_str[:200]}"
     )
+
+
+def safe_json_parse(json_str: str) -> Dict[str, Any]:
+    """
+    Parse JSON with automatic error recovery.
+
+    Backwards-compat wrapper around `safe_json_parse_tracked` that drops the
+    recovery flag. Use the tracked variant when you want telemetry on how
+    often parsing falls into the recovery chain.
+
+    Examples:
+        >>> safe_json_parse('{"label": "Test",}')  # trailing comma
+        {'label': 'Test'}
+
+        >>> safe_json_parse('// comment\\n{"label": "Test"}')  # comment
+        {'label': 'Test'}
+    """
+    data, _ = safe_json_parse_tracked(json_str)
+    return data
 
 
 def extract_number_from_text(text: str) -> int:

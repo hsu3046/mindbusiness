@@ -38,10 +38,47 @@ def get_genai_client(api_key_override: Optional[str] = None):
         )
     return genai.Client(api_key=key)
 
-# Model Configuration
-MODEL_REASONING = "gemini-3-pro-preview"  # For Stage 1: Intent Classification
-MODEL_GENERATION = "gemini-3-flash-preview"  # For Stage 2+: Mindmap Generation & Node Expansion
-MODEL_REPORT = "gemini-3-pro-preview"  # For Report Generation (higher quality)
+# ── Model identifiers ────────────────────────────────────────────────────────
+# Single source of truth for model IDs. STAGE_CONFIG below picks which one
+# each call site uses, plus the reasoning level / temperature / search policy.
+MODEL_PRO = "gemini-3.1-pro-preview"          # heavy reasoning, top quality
+MODEL_FLASH = "gemini-3-flash-preview"        # fast structured generation (3.1 flash N/A)
+MODEL_LITE = "gemini-3.1-flash-lite-preview"  # cheapest + fastest, simple tasks
+
+# Legacy aliases — kept for any caller still importing them. Internal code
+# should prefer STAGE_CONFIG below.
+MODEL_REASONING = MODEL_PRO
+MODEL_GENERATION = MODEL_FLASH
+MODEL_REPORT = MODEL_PRO
+
+
+# ── Per-stage call config ────────────────────────────────────────────────────
+# Each entry tells the helpers which model + temperature + thinking_level +
+# whether to attach Google Search grounding for ONE call site. Keeping it as
+# a dict (not Pydantic) so we can hot-swap entries without code changes.
+#
+# Reasoning level: "off" / "minimal" / "low" / "medium" / "high"
+#   - "off"  → ThinkingConfig is omitted entirely (skips thinking budget on
+#              Lite where the field is unsupported anyway)
+#   - others → mapped to types.ThinkingLevel by api/lib/gemini_config.py
+#
+# use_search: True attaches a Tool(google_search=GoogleSearch()) — currently
+# only on the report writer where grounded facts matter. Adds latency + cost
+# so we don't blanket-enable.
+STAGE_CONFIG = {
+    "validate_key":      {"model": MODEL_LITE,  "temperature": 0.0, "reasoning": "off"},
+    "classify":          {"model": MODEL_PRO,   "temperature": 0.1, "reasoning": "medium"},
+    "dna_extract":       {"model": MODEL_PRO,   "temperature": 0.2, "reasoning": "low"},
+    "question_gen":      {"model": MODEL_LITE,  "temperature": 0.3, "reasoning": "off"},
+    "framework_pick":    {"model": MODEL_LITE,  "temperature": 0.1, "reasoning": "off"},
+    "framework_fallback":{"model": MODEL_LITE,  "temperature": 0.1, "reasoning": "off"},
+    "generate_l1":       {"model": MODEL_FLASH, "temperature": 0.4, "reasoning": "off"},
+    "expand":            {"model": MODEL_FLASH, "temperature": 0.6, "reasoning": "off"},
+    # Report = two-stage Researcher + Writer (see api/logic/report_generator.py)
+    "report_researcher": {"model": MODEL_FLASH, "temperature": 0.2, "reasoning": "off",
+                          "use_search": True},
+    "report_writer":     {"model": MODEL_PRO,   "temperature": 0.7, "reasoning": "high"},
+}
 
 # Framework Database
 FRAMEWORK_DB = {

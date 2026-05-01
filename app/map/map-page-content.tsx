@@ -6,7 +6,7 @@ import { MindmapCanvas } from "@/components/mindmap/mindmap-canvas"
 import { ReportPanel } from "@/components/mindmap/report-panel"
 import { useMindmapStore } from "@/stores/mindmap-store"
 import { expandNode } from "@/lib/api"
-import { loadTree, saveTree } from "@/lib/tree-cache"
+import { loadTree, saveTree, legacyIdFromTopic } from "@/lib/tree-cache"
 import { createSkeletonTree } from "@/lib/framework-templates"
 import { MindmapNode, ExpandRequest } from "@/types/mindmap"
 import { toast } from "sonner"
@@ -97,7 +97,10 @@ export default function MapPageContent() {
     // migration happens inside the loadTree call below (legacyTopic
     // fallback recovers the old entry, then setRootNode persists it under
     // the new id).
-    const effectiveId = idFromUrl || (legacyTopic ? `legacy-${legacyTopic.slice(0, 8)}` : '')
+    // For legacy `?topic=` URLs, derive a stable hash-based id so two
+    // topics that share a prefix (e.g. "AI 자동화 생산성" / "AI 자동화 비즈니스")
+    // don't collide in tree-cache.
+    const effectiveId = idFromUrl || (legacyTopic ? legacyIdFromTopic(legacyTopic) : '')
     useEffect(() => {
         if (effectiveId) setMindmapId(effectiveId)
         if (legacyTopic && !storeTopic) setTopic(legacyTopic)

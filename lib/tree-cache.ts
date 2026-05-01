@@ -56,6 +56,26 @@ export function generateMindmapId(): string {
     return Math.random().toString(16).slice(2, 14).padEnd(12, '0')
 }
 
+/**
+ * Stable 8-hex hash of an arbitrary string. Used to derive a collision-
+ * resistant id for legacy `?topic=` URL fallbacks — slicing the topic's
+ * first 8 chars (the previous approach) collided whenever two topics
+ * shared a prefix.
+ */
+function stableShortHash(s: string): string {
+    // djb2 variant — deterministic, no crypto needed
+    let h = 5381
+    for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) + h + s.charCodeAt(i)) | 0
+    }
+    return (h >>> 0).toString(16).padStart(8, '0').slice(0, 8)
+}
+
+/** Build a stable id for a legacy `?topic=` URL — e.g. `legacy-a3f9b2c1`. */
+export function legacyIdFromTopic(topic: string): string {
+    return `legacy-${stableShortHash(topic)}`
+}
+
 /** Legacy slug — only used for back-compat lookups, never for new writes. */
 function legacyTopicSlug(topic: string): string {
     return topic.toLowerCase().replace(/\s+/g, '_').slice(0, 50)
@@ -167,9 +187,11 @@ export function listRecentMaps(): RecentMapEntry[] {
         const key = localStorage.key(i)
         if (!key?.startsWith(TREE_CACHE_PREFIX)) continue
         const id = key.slice(TREE_CACHE_PREFIX.length)
-        // Skip the legacy slug entries — they share the same prefix but
-        // their "id" is a topic slug, which won't round-trip via ?id=.
-        if (id.includes('_')) continue
+        // Only include id-keyed entries (new 12-hex format or the
+        // `legacy-XXXXXXXX` shape produced by legacyIdFromTopic). Old
+        // slug-keyed entries are excluded — their "id" is a topic slug
+        // that doesn't round-trip via `?id=`.
+        if (!/^(?:[0-9a-f]{12}|legacy-[0-9a-f]{8})$/.test(id)) continue
 
         const raw = localStorage.getItem(key)
         if (!raw) continue

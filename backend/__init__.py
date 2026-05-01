@@ -1,3 +1,0 @@
-"""
-MindBusiness AI Backend Package
-"""

@@ -16,6 +16,15 @@ export interface MindmapNode {
 
     // Phase 2: Monetization
     recommendations?: RecommendationNode[]
+
+    /**
+     * If the AI applied a specific framework (PERSONA, SWOT, …) when
+     * expanding this node, the framework id is stamped here. Lets later
+     * expansions of any descendant collect the full chain of frameworks
+     * along the path — used by the `used_frameworks` accumulation in
+     * map-page-content's handleExpand to fix the nesting-limit check.
+     */
+    applied_framework_id?: string
 }
 
 export interface RecommendationNode {
@@ -63,6 +72,35 @@ export interface ExpandRequest {
     existing_children?: string[]        // Already existing children (for add mode)
     force_framework?: string
     language: string
+    /**
+     * Optional Gemini sampling seed — pass an integer to make the call
+     * deterministic (debug / A-B / CI golden tests). Omit for normal
+     * stochastic generation.
+     */
+    seed?: number
+    /**
+     * Business DNA from smart-classify. When present the backend injects
+     * a `[BUSINESS DNA]` block into the system_instruction so generated
+     * children are specific to the user's actual business.
+     */
+    context_vector?: ContextVector
+    /**
+     * High-level intent (creation/diagnosis/choice/strategy). Tunes the
+     * prompt's tone toward the right kind of children at deep levels.
+     */
+    intent_mode?: 'creation' | 'diagnosis' | 'choice' | 'strategy'
+    /**
+     * User-selected expansion strategy (Phase 2 mode dropdown). Each maps
+     * to a parameter override bundle in the backend (temperature delta,
+     * top_p, model swap, prompt addon).
+     *   - default: stage settings as-is
+     *   - diverse: hotter + top_p high + ~1.5x count + diversity prompt
+     *   - deep: Pro + HIGH reasoning + cooler + step-by-step prompt
+     *   - mece: cooler + tighter top_p + MECE-strict prompt
+     * Distinct from `ExpandResponse.expansion_mode` which describes the
+     * structure shape the AI produced.
+     */
+    expansion_mode?: 'default' | 'diverse' | 'deep' | 'mece'
 }
 
 export interface ExpandResponse {

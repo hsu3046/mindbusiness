@@ -20,11 +20,19 @@ import {
 import '@xyflow/react/dist/style.css'
 import { MindmapNode } from '@/types/mindmap'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { PlusSignIcon, PencilEdit01Icon, Delete02Icon, Loading03Icon, RefreshIcon, AiChat02Icon, NoteIcon } from '@hugeicons/core-free-icons'
+import { PlusSignIcon, PencilEdit01Icon, Delete02Icon, Loading03Icon, RefreshIcon, AiChat02Icon, NoteIcon, ArrowDown01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
 import { DottedGlowBackground } from '@/components/ui/dotted-glow-background'
 import { NodeStatusIndicator } from '@/components/node-status-indicator'
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+    DropdownMenuRadioGroup,
+    DropdownMenuRadioItem,
+} from '@/components/ui/dropdown-menu'
 import { calculateD3Layout } from '@/lib/d3-layout'
-import { useMindmapStore } from '@/stores/mindmap-store'
+import { useMindmapStore, type ExpansionMode } from '@/stores/mindmap-store'
 import { HomeButton } from '@/components/mindmap/home-button'
 import { SaveLoadButtons } from '@/components/mindmap/save-load-buttons'
 import { Button } from '@/components/ui/button'
@@ -150,6 +158,36 @@ interface CustomNodeData {
     [key: string]: unknown
 }
 
+// Phase 1: tiny semantic-type indicator (top-left of node body).
+// Backend already produces `semantic_type`; this is the first place it's
+// surfaced visually. Tailwind palette tokens chosen to match the rest
+// of the app's accent colors.
+const SEMANTIC_TYPE_COLOR: Record<string, string> = {
+    finance: 'bg-emerald-500',
+    action: 'bg-indigo-500',
+    risk: 'bg-rose-500',
+    persona: 'bg-amber-500',
+    resource: 'bg-slate-400',
+    metric: 'bg-cyan-500',
+    // 'other' intentionally not mapped → no dot rendered
+}
+
+// Phase 2: human labels for the expansion-mode picker. Order is the order
+// the items appear in the dropdown.
+const EXPANSION_MODE_LABEL: Record<ExpansionMode, string> = {
+    default: '기본',
+    diverse: '다양하게',
+    deep: '깊이있게',
+    mece: '핵심만 (MECE)',
+}
+
+const EXPANSION_MODE_HINT: Record<ExpansionMode, string> = {
+    default: '균형잡힌 기본 확장',
+    diverse: '서로 다른 관점으로 폭넓게',
+    deep: 'Pro 모델로 깊이 사고',
+    mece: '겹치지 않게 빠짐없이',
+}
+
 const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data: CustomNodeData }) {
     const style = getLevelStyle(data.level)
     const isRoot = data.level === 0
@@ -158,10 +196,21 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
     const targetPos = data.side === 'left' ? Position.Right : Position.Left
     const sourcePos = data.side === 'left' ? Position.Left : Position.Right
 
-    // Toolbar visible on every node, including the root. The root is the
-    // user's mindmap title and should be editable; we just hide the delete
-    // action because removing the root makes no sense (and the store's
-    // deleteNode already refuses it).
+    // Semantic type color (skip root and 'other' / unset)
+    const semanticDotClass = !isRoot && data.node?.semantic_type
+        ? SEMANTIC_TYPE_COLOR[data.node.semantic_type]
+        : undefined
+
+    // Phase 2: read the user's selected expansion mode from the store and
+    // expose a small picker next to AI확장. `default` mode shows no badge so
+    // the toolbar stays uncluttered for the common case.
+    const expansionMode = useMindmapStore((s) => s.expansionMode)
+    const setExpansionMode = useMindmapStore((s) => s.setExpansionMode)
+
+    // Toolbar visible on every node, including the root (the root is the
+    // user's mindmap title and should be editable). Delete is hidden on
+    // the root because removing it makes no sense (the store's deleteNode
+    // already refuses it).
     const showToolbar = true
     const canDelete = !isRoot
 
@@ -188,31 +237,90 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
                         </button>
                     )}
 
-                    {/* 2. AI확장 */}
+                    {/* 2. AI확장 + 모드 picker (split-button cluster) */}
                     {canShowExpandButton && (
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation()
-                                // 자식이 있지만 미표시 상태면 먼저 reveal
-                                if (data.hasChildren && !data.childrenRevealed) {
-                                    data.onRevealChildren()
-                                } else {
-                                    // expand 호출 (새 자식 생성)
-                                    data.onExpand()
+                        <div className="flex items-stretch">
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    // 자식이 있지만 미표시 상태면 먼저 reveal
+                                    if (data.hasChildren && !data.childrenRevealed) {
+                                        data.onRevealChildren()
+                                    } else {
+                                        // expand 호출 (새 자식 생성)
+                                        data.onExpand()
+                                    }
+                                }}
+                                disabled={data.isAnyExpanding && !data.isExpanding}
+                                className={`p-1.5 rounded-l-md shadow-sm border transition-colors ${data.isAnyExpanding && !data.isExpanding
+                                    ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed'
+                                    : 'bg-white/90 hover:bg-indigo-100 text-slate-600 hover:text-indigo-600 border-slate-200'
+                                    }`}
+                                title={
+                                    data.isAnyExpanding && !data.isExpanding
+                                        ? "AI확장 중..."
+                                        : data.hasChildren && !data.childrenRevealed
+                                            ? "펼치기"
+                                            : `AI확장 (${EXPANSION_MODE_LABEL[expansionMode]})`
                                 }
-                            }}
-                            disabled={data.isAnyExpanding && !data.isExpanding}
-                            className={`p-1.5 rounded-md shadow-sm border transition-colors ${data.isAnyExpanding && !data.isExpanding
-                                ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed'
-                                : 'bg-white/90 hover:bg-indigo-100 text-slate-600 hover:text-indigo-600 border-slate-200'
-                                }`}
-                            title={data.isAnyExpanding && !data.isExpanding ? "AI확장 중..." : (data.hasChildren && !data.childrenRevealed ? "펼치기" : "AI확장")}
+                            >
+                                <HugeiconsIcon icon={AiChat02Icon} size={16} color="#ff5757" />
+                            </button>
+                            <DropdownMenu>
+                                <DropdownMenuTrigger
+                                    onClick={(e) => e.stopPropagation()}
+                                    disabled={data.isAnyExpanding}
+                                    render={
+                                        <button
+                                            className={`px-1 rounded-r-md shadow-sm border border-l-0 transition-colors ${data.isAnyExpanding
+                                                ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed'
+                                                : 'bg-white/90 hover:bg-indigo-100 text-slate-500 hover:text-indigo-600 border-slate-200'
+                                                }`}
+                                            title="확장 방식 선택"
+                                        />
+                                    }
+                                >
+                                    <HugeiconsIcon icon={ArrowDown01Icon} size={12} />
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                    align="start"
+                                    className="min-w-[200px]"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <DropdownMenuRadioGroup
+                                        value={expansionMode}
+                                        onValueChange={(v) => setExpansionMode(v as ExpansionMode)}
+                                    >
+                                        {(['default', 'diverse', 'deep', 'mece'] as const).map((m) => (
+                                            <DropdownMenuRadioItem key={m} value={m}>
+                                                <div className="flex flex-col">
+                                                    <span className="text-sm">{EXPANSION_MODE_LABEL[m]}</span>
+                                                    <span className="text-xs text-slate-400">{EXPANSION_MODE_HINT[m]}</span>
+                                                </div>
+                                            </DropdownMenuRadioItem>
+                                        ))}
+                                    </DropdownMenuRadioGroup>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        </div>
+                    )}
+
+                    {/* 3. 설명 보기 — AI가 description을 줬을 때만 노출.
+                        Popover 컴포넌트가 없어서 native title tooltip으로 처리;
+                        Phase 3 quality 패스에서 정식 popover로 업그레이드 예정. */}
+                    {data.node?.description && (
+                        <button
+                            type="button"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1.5 rounded-md bg-white/90 hover:bg-sky-100 text-slate-600 hover:text-sky-600 shadow-sm border border-slate-200 transition-colors cursor-help"
+                            title={data.node.description}
+                            aria-label="이 아이디어의 설명"
                         >
-                            <HugeiconsIcon icon={AiChat02Icon} size={16} color="#ff5757" />
+                            <HugeiconsIcon icon={InformationCircleIcon} size={16} />
                         </button>
                     )}
 
-                    {/* 3. 수정 */}
+                    {/* 4. 수정 */}
                     <button
                         onClick={(e) => {
                             e.stopPropagation()
@@ -265,6 +373,15 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
                         position={Position.Left}
                         className="!opacity-0 !w-1 !h-1"
                     />
+
+                    {/* Semantic type indicator — small colored dot, top-left */}
+                    {semanticDotClass && (
+                        <span
+                            className={`absolute top-1.5 left-1.5 h-1.5 w-1.5 rounded-full ${semanticDotClass}`}
+                            aria-hidden="true"
+                            title={data.node?.semantic_type}
+                        />
+                    )}
 
                     {/* Node Content */}
                     <div className="flex flex-col items-center">

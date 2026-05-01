@@ -21,11 +21,13 @@ type Step = "input" | "loading" | "question" | "generating"
 
 export default function HomePage() {
     const router = useRouter()
-    // Pre-seed the mindmap store before navigating so the /map page picks
-    // up the topic + id without needing them in the URL (URL stays short
-    // with just ?id=).
+    // Pre-seed the store before navigating so /map can pick up identity
+    // (id + topic), the freshly-classified DNA, and the chosen intent —
+    // no URL params needed beyond the short ?id=.
     const setStoreMindmapId = useMindmapStore((s) => s.setMindmapId)
     const setStoreTopic = useMindmapStore((s) => s.setTopic)
+    const setStoreContextVector = useMindmapStore((s) => s.setContextVector)
+    const setStoreIntentMode = useMindmapStore((s) => s.setIntentMode)
     const [step, setStep] = useState<Step>("input")
     const [topic, setTopic] = useState("")
     const [intentMode, setIntentMode] = useState<IntentMode>('creation')
@@ -83,6 +85,15 @@ export default function HomePage() {
                 intent_mode: intentMode,
                 conversation_history: conversationHistory
             })
+
+            // Stash DNA + intent in the store so /map's expand flow can use
+            // them. Done on every action path (ask_question / generate /
+            // fill_and_generate) — the user's intent is the same regardless
+            // of whether the AI needs another turn.
+            if (result.context_vector) {
+                setStoreContextVector(result.context_vector)
+            }
+            setStoreIntentMode(intentMode)
 
             if (result.action === "ask_question" && result.question) {
                 // DNA summary 저장 (AI가 누적 정보 기반으로 생성한 정제된 타이틀)

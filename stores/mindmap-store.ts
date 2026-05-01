@@ -1,6 +1,26 @@
 import { create } from 'zustand'
-import { MindmapNode } from '@/types/mindmap'
+import { MindmapNode, ContextVector } from '@/types/mindmap'
 import { saveTree } from '@/lib/tree-cache'
+
+/** Intent buckets the smart-classify pipeline emits. */
+export type IntentMode = 'creation' | 'diagnosis' | 'choice' | 'strategy'
+
+/** User-selected expansion strategy. See ExpandRequest.expansion_mode. */
+export type ExpansionMode = 'default' | 'diverse' | 'deep' | 'mece'
+
+const EXPANSION_MODE_STORAGE_KEY = 'mindbusiness_expansion_mode'
+const DEFAULT_EXPANSION_MODE: ExpansionMode = 'default'
+
+function readPersistedExpansionMode(): ExpansionMode {
+    if (typeof window === 'undefined') return DEFAULT_EXPANSION_MODE
+    try {
+        const v = window.localStorage.getItem(EXPANSION_MODE_STORAGE_KEY)
+        if (v === 'default' || v === 'diverse' || v === 'deep' || v === 'mece') return v
+    } catch {
+        // localStorage unavailable — fall through to default
+    }
+    return DEFAULT_EXPANSION_MODE
+}
 
 type ViewMode = 'card' | 'tree' | 'mindmap'
 
@@ -9,6 +29,24 @@ interface DeletedNodeBackup {
     node: MindmapNode
     parentId: string
     index: number  // 부모 내 위치
+}
+
+/** Languages the AI pipeline currently supports as input/output. */
+export type AppLanguage = 'Korean' | 'English' | 'Japanese'
+
+const LANGUAGE_STORAGE_KEY = 'mindbusiness_language'
+const DEFAULT_LANGUAGE: AppLanguage = 'Korean'
+
+/** Read the persisted language pref (SSR-safe). */
+function readPersistedLanguage(): AppLanguage {
+    if (typeof window === 'undefined') return DEFAULT_LANGUAGE
+    try {
+        const v = window.localStorage.getItem(LANGUAGE_STORAGE_KEY)
+        if (v === 'Korean' || v === 'English' || v === 'Japanese') return v
+    } catch {
+        // localStorage may be unavailable (private mode etc) — fall through
+    }
+    return DEFAULT_LANGUAGE
 }
 
 interface MindmapStore {
@@ -35,6 +73,32 @@ interface MindmapStore {
      * the correct `?framework=` instead of guessing.
      */
     frameworkId: string | null
+    /**
+     * UI/AI language — flows into ExpandRequest.language so generated children
+     * match the user's preference. Persisted to localStorage so it survives
+     * refresh; default Korean. Settable via setLanguage.
+     */
+    language: AppLanguage
+    /**
+     * Business DNA captured by smart-classify (summary/target/edge/objective).
+     * Populated by the home page after a successful classify, then forwarded
+     * into every ExpandRequest so generated children stay specific to the
+     * user's actual business instead of generic framework boilerplate.
+     */
+    contextVector: ContextVector | null
+    /**
+     * High-level intent (creation/diagnosis/choice/strategy) chosen on the
+     * landing page. Threaded into ExpandRequest as `intent_mode` so the
+     * prompt can tone-shift toward the right kind of children.
+     */
+    intentMode: IntentMode | null
+    /**
+     * Currently-selected expansion mode (default / diverse / deep / mece).
+     * Applied to every AI확장 click until the user changes it via the
+     * mode picker. Persisted to localStorage so the choice survives a
+     * refresh.
+     */
+    expansionMode: ExpansionMode
 
     // Delete/Undo State
     deletedNodeBackup: DeletedNodeBackup | null
@@ -49,6 +113,10 @@ interface MindmapStore {
     setMindmapId: (id: string | null) => void
     setTopic: (topic: string | null) => void
     setFrameworkId: (id: string | null) => void
+    setLanguage: (language: AppLanguage) => void
+    setContextVector: (cv: ContextVector | null) => void
+    setIntentMode: (mode: IntentMode | null) => void
+    setExpansionMode: (mode: ExpansionMode) => void
     setRootNode: (node: MindmapNode) => void
     setCurrentNode: (node: MindmapNode) => void
     navigateTo: (node: MindmapNode) => void
@@ -59,7 +127,17 @@ interface MindmapStore {
     setExpanding: (nodeId: string | null) => void
     setEditingNodeId: (nodeId: string | null) => void  // 편집 모드 설정
     setLoading: (loading: boolean) => void
-    expandNode: (nodeId: string, children: MindmapNode[]) => void
+    /**
+     * Replace a node's children with the result of an expansion. When
+     * `appliedFrameworkId` is set, also stamp it onto the target node so
+     * subsequent expansions of any descendant can recover the full
+     * frameworks-in-path list (Phase 0 fix for the broken nesting check).
+     */
+    expandNode: (
+        nodeId: string,
+        children: MindmapNode[],
+        appliedFrameworkId?: string | null,
+    ) => void
     addChildNode: (parentId: string) => MindmapNode | null  // 수동 자식 노드 추가 (빈 라벨)
     updateNodeLabel: (nodeId: string, label: string) => void  // 노드 라벨 업데이트
     deleteNode: (nodeId: string) => boolean  // 삭제 성공 여부 반환
@@ -76,6 +154,10 @@ const initialState = {
     mindmapId: null as string | null,
     topic: null as string | null,
     frameworkId: null as string | null,
+    language: readPersistedLanguage(),
+    contextVector: null as ContextVector | null,
+    intentMode: null as IntentMode | null,
+    expansionMode: readPersistedExpansionMode(),
     deletedNodeBackup: null as DeletedNodeBackup | null,
     viewMode: 'mindmap' as ViewMode,
     expandingNodeId: null,
@@ -110,6 +192,30 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
     setMindmapId: (mindmapId) => set({ mindmapId }),
     setTopic: (topic) => set({ topic }),
     setFrameworkId: (frameworkId) => set({ frameworkId }),
+
+    setLanguage: (language) => {
+        set({ language })
+        if (typeof window !== 'undefined') {
+            try {
+                window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language)
+            } catch {
+                // private mode etc — silently skip persist
+            }
+        }
+    },
+
+    setContextVector: (cv) => set({ contextVector: cv }),
+    setIntentMode: (mode) => set({ intentMode: mode }),
+    setExpansionMode: (mode) => {
+        set({ expansionMode: mode })
+        if (typeof window !== 'undefined') {
+            try {
+                window.localStorage.setItem(EXPANSION_MODE_STORAGE_KEY, mode)
+            } catch {
+                // private mode etc — silently skip persist
+            }
+        }
+    },
 
     setRootNode: (node) => {
         const nextTopic = node.label || get().topic
@@ -194,14 +300,21 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
 
     setLoading: (loading) => set({ isLoading: loading }),
 
-    expandNode: (nodeId, children) => {
+    expandNode: (nodeId, children, appliedFrameworkId) => {
         const { rootNode, currentNode, mindmapId, frameworkId, topic } = get()
         if (!rootNode || !currentNode) return
 
-        // Recursively update node with children
+        // Recursively update node with children. When the AI applied a
+        // framework, also stamp `applied_framework_id` onto the target node
+        // so future expansions of any descendant can collect the full list
+        // of frameworks-in-path (used_frameworks accumulation).
         const updateNodeChildren = (node: MindmapNode): MindmapNode => {
             if (node.id === nodeId) {
-                return { ...node, children }
+                const next: MindmapNode = { ...node, children }
+                if (appliedFrameworkId) {
+                    next.applied_framework_id = appliedFrameworkId
+                }
+                return next
             }
             return {
                 ...node,

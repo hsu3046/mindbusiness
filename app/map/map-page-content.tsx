@@ -125,7 +125,7 @@ export default function MapPageContent() {
         //    On refresh / new-tab the in-memory store is empty, so try
         //    tree-cache first to recover any edits the user already made.
         if (isFreeStart) {
-            const cached = loadTree(idFromUrl, legacyTopic || undefined)
+            const cached = loadTree(effectiveId, legacyTopic || undefined)
             if (cached) {
                 setRootNode(cached)
             } else {
@@ -148,7 +148,7 @@ export default function MapPageContent() {
         //    fall back to a blank root rather than rendering null forever
         //    when the cache also lost the entry.
         if (isLoaded) {
-            const cached = loadTree(idFromUrl, legacyTopic || undefined)
+            const cached = loadTree(effectiveId, legacyTopic || undefined)
             if (cached) {
                 setRootNode(cached)
             } else {
@@ -166,8 +166,10 @@ export default function MapPageContent() {
 
         // 3) Normal smart-classify path — try the cache first (covers
         //    refresh after user has been editing) before consuming the
-        //    one-shot l1_labels from localStorage.
-        const cached = loadTree(idFromUrl, legacyTopic || undefined)
+        //    one-shot l1_labels from localStorage. Loading via
+        //    effectiveId (not idFromUrl) ensures legacy URL refreshes
+        //    keep finding their migrated entry instead of the stale slug.
+        const cached = loadTree(effectiveId, legacyTopic || undefined)
         if (cached) {
             setRootNode(cached)
             setLoading(false)

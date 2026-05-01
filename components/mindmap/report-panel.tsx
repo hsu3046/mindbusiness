@@ -12,8 +12,15 @@ import {
 import { Button } from "@/components/ui/button"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Download04Icon, Loading03Icon, AiChat02Icon, NoteIcon, Cancel01Icon } from "@hugeicons/core-free-icons"
-import { startReportJob, streamReportJob } from "@/lib/api"
+import { startReportJob, streamReportJob, type ReportPhase } from "@/lib/api"
 import { MindmapNode, ReportRequest } from "@/types/mindmap"
+
+// Lightweight phase → user-facing label mapping. Kept inline (no i18n yet)
+// and intentionally muted text — the panel design avoids emoji/heavy colors.
+const PHASE_LABELS: Record<ReportPhase, string> = {
+    researching: "최신 자료를 수집하고 있어요",
+    writing: "기획서를 작성하고 있어요",
+}
 
 interface ReportPanelProps {
     open: boolean
@@ -74,6 +81,7 @@ export function ReportPanel({
     const [markdown, setMarkdown] = useState("")
     const [isGenerating, setIsGenerating] = useState(false)
     const [isDone, setIsDone] = useState(false)
+    const [phase, setPhase] = useState<ReportPhase | null>(null)
     const contentRef = useRef<HTMLDivElement>(null)
 
     // Active SSE controller — abort on close/unmount/regenerate
@@ -117,6 +125,11 @@ export function ReportPanel({
             setMarkdown(startingMarkdown)
             setIsGenerating(true)
             setIsDone(false)
+            // On resume we don't know the last phase yet; the next phase
+            // marker pushed by the producer will overwrite this within a
+            // few hundred ms, so default to "researching" for the empty
+            // state and let the SSE stream correct it.
+            setPhase(startCursor === 0 ? "researching" : null)
 
             activeStreamRef.current = streamReportJob(
                 jobId,
@@ -133,16 +146,21 @@ export function ReportPanel({
                     activeStreamRef.current = null
                     setIsGenerating(false)
                     setIsDone(true)
+                    setPhase(null)
                     clearPersisted()
                 },
                 (error) => {
                     inFlightRef.current = false
                     activeStreamRef.current = null
                     setIsGenerating(false)
+                    setPhase(null)
                     setMarkdown((prev) => prev + `\n\n---\n\n⚠️ 오류 발생: ${error.message}`)
                     clearPersisted()
                 },
-                { cursor: startCursor }
+                {
+                    cursor: startCursor,
+                    onPhase: (next) => setPhase(next),
+                }
             )
         },
         [topicSig]
@@ -162,6 +180,7 @@ export function ReportPanel({
         setMarkdown("")
         setIsGenerating(true)
         setIsDone(false)
+        setPhase("researching")
 
         const request: ReportRequest = {
             topic,
@@ -176,6 +195,7 @@ export function ReportPanel({
         } catch (error) {
             inFlightRef.current = false
             setIsGenerating(false)
+            setPhase(null)
             setMarkdown(
                 `\n\n⚠️ 오류 발생: ${error instanceof Error ? error.message : "알 수 없는 오류"}`
             )
@@ -220,6 +240,7 @@ export function ReportPanel({
             setMarkdown("")
             setIsDone(false)
             setIsGenerating(false)
+            setPhase(null)
         }
         onOpenChange(newOpen)
     }
@@ -297,7 +318,9 @@ export function ReportPanel({
                     {isGenerating && !markdown && (
                         <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-400">
                             <HugeiconsIcon icon={Loading03Icon} size={32} className="animate-spin text-indigo-500" />
-                            <p className="text-sm">기획서를 생성하고 있습니다...</p>
+                            <p className="text-sm">
+                                {phase ? PHASE_LABELS[phase] : "기획서를 준비하고 있어요"}
+                            </p>
                         </div>
                     )}
 
@@ -320,7 +343,9 @@ export function ReportPanel({
                     {isGenerating && markdown && (
                         <div className="flex items-center gap-2 mt-4 text-indigo-500">
                             <HugeiconsIcon icon={Loading03Icon} size={14} className="animate-spin" />
-                            <span className="text-xs">생성 중...</span>
+                            <span className="text-xs">
+                                {phase ? PHASE_LABELS[phase] : "생성 중..."}
+                            </span>
                         </div>
                     )}
                 </div>

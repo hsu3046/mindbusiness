@@ -239,18 +239,29 @@ export async function startReportJob(request: ReportRequest): Promise<string> {
     return data.job_id
 }
 
+export type ReportPhase = 'researching' | 'writing'
+
 /**
  * Open a resumable SSE stream for a report job.
  *
  * `cursor` lets a reconnecting client resume from the chunk it last received,
  * so a network blip / refresh / device switch can pick up mid-report.
+ *
+ * The backend now interleaves two kinds of envelopes on the same cursor
+ * stream: phase markers (`{type: "phase", phase: "researching"|"writing"}`)
+ * and text chunks (`{type: "text", text: "..."}`). `onPhase` lets the UI
+ * show "수집 중" vs "작성 중" without polling a side channel.
  */
 export function streamReportJob(
     jobId: string,
     onChunk: (text: string, cursor: number) => void,
     onDone: () => void,
     onError: (error: Error) => void,
-    options?: { cursor?: number; idleTimeoutMs?: number }
+    options?: {
+        cursor?: number
+        idleTimeoutMs?: number
+        onPhase?: (phase: ReportPhase, cursor: number) => void
+    }
 ): { abort: () => void } {
     const controller = new AbortController()
     const idleTimeoutMs = options?.idleTimeoutMs ?? 90_000
@@ -308,7 +319,9 @@ export function streamReportJob(
                     }
                     try {
                         const parsed = JSON.parse(data) as {
+                            type?: 'text' | 'phase'
                             text?: string
+                            phase?: ReportPhase
                             cursor?: number
                             error?: string
                         }
@@ -317,7 +330,13 @@ export function streamReportJob(
                             onError(new Error(parsed.error))
                             return
                         }
-                        if (parsed.text) onChunk(parsed.text, parsed.cursor ?? 0)
+                        const cursor = parsed.cursor ?? 0
+                        if (parsed.type === 'phase' && parsed.phase) {
+                            options?.onPhase?.(parsed.phase, cursor)
+                        } else if (parsed.text !== undefined) {
+                            // type === "text" or legacy untyped envelope
+                            onChunk(parsed.text, cursor)
+                        }
                     } catch {
                         // skip malformed chunk
                     }

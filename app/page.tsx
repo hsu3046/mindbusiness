@@ -7,6 +7,7 @@ import { smartClassify } from "@/lib/api"
 import { LOADING_QUOTES, LoadingQuote } from "@/lib/framework-templates"
 import { toast } from "sonner"
 import { HeroInput, LoadingScreen, IntentMode } from "@/components/landing"
+import { SaveLoadButtons } from "@/components/mindmap/save-load-buttons"
 import { DottedGlowBackground } from "@/components/ui/dotted-glow-background"
 import { ConversationMessage, SmartClassifyResponse, isAPIError } from "@/types/mindmap"
 import { isAnyKeyAvailable, openApiKeySettings } from "@/lib/api-key-store"
@@ -180,15 +181,39 @@ export default function HomePage() {
             <div className="relative z-10 w-full max-w-2xl px-4">
                 <AnimatePresence mode="wait">
                     {step === "input" && (
-                        <HeroInput
-                            topic={topic}
-                            onTopicChange={setTopic}
-                            onSubmit={handleSubmit}
-                            intentMode={intentMode}
-                            onIntentModeChange={setIntentMode}
-                            apiKeyError={apiKeyError}
-                            onApiKeyErrorClear={() => setApiKeyError("")}
-                        />
+                        <motion.div
+                            key="input-wrapper"
+                            initial={{ opacity: 1 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="flex flex-col items-center"
+                        >
+                            <HeroInput
+                                topic={topic}
+                                onTopicChange={setTopic}
+                                onSubmit={handleSubmit}
+                                intentMode={intentMode}
+                                onIntentModeChange={setIntentMode}
+                                apiKeyError={apiKeyError}
+                                onApiKeyErrorClear={() => setApiKeyError("")}
+                            />
+                            {/* Secondary actions: 자유 시작 + 불러오기 */}
+                            <div className="mt-6 flex items-center gap-4 text-sm text-slate-400">
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        router.push(
+                                            `/map?topic=${encodeURIComponent("새 아이디어")}&framework=LOGIC&intent=creation&free=1`,
+                                        )
+                                    }
+                                    className="hover:text-slate-700 transition-colors underline-offset-4 hover:underline"
+                                >
+                                    또는 자유롭게 시작하기 →
+                                </button>
+                                <span className="text-slate-200">·</span>
+                                <SaveLoadButtons showSave={false} />
+                            </div>
+                        </motion.div>
                     )}
 
                     {step === "loading" && (

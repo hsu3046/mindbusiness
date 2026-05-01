@@ -24,6 +24,8 @@ import { DottedGlowBackground } from '@/components/ui/dotted-glow-background'
 import { NodeStatusIndicator } from '@/components/node-status-indicator'
 import { calculateD3Layout } from '@/lib/d3-layout'
 import { useMindmapStore } from '@/stores/mindmap-store'
+import { HomeButton } from '@/components/mindmap/home-button'
+import { SaveLoadButtons } from '@/components/mindmap/save-load-buttons'
 
 interface MindmapCanvasProps {
     rootNode: MindmapNode
@@ -554,9 +556,10 @@ function MindmapCanvasInner({
                     maxZoom={2}
                     proOptions={{ hideAttribution: true }}
                 >
-                    {/* 재정렬 버튼 - 왼쪽 상단 */}
+                    {/* 좌상단: 메인 + 재정렬 (탐색·뷰 컨트롤) */}
                     <Panel position="top-left" className="m-4">
                         <div className="flex gap-2">
+                            <HomeButton />
                             <button
                                 onClick={() => {
                                     hasFittedView.current = false
@@ -575,6 +578,13 @@ function MindmapCanvasInner({
                                 <HugeiconsIcon icon={RefreshIcon} size={16} />
                                 <span className="text-sm font-medium">재정렬</span>
                             </button>
+                        </div>
+                    </Panel>
+
+                    {/* 우상단: 저장/불러오기 + 기획서 (저장·산출물) */}
+                    <Panel position="top-right" className="m-4">
+                        <div className="flex gap-2">
+                            <SaveLoadButtons />
                             {onReportOpen && (
                                 <button
                                     onClick={onReportOpen}

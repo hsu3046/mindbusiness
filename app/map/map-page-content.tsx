@@ -6,7 +6,7 @@ import { MindmapCanvas } from "@/components/mindmap/mindmap-canvas"
 import { ReportPanel } from "@/components/mindmap/report-panel"
 import { useMindmapStore } from "@/stores/mindmap-store"
 import { expandNode } from "@/lib/api"
-import { saveTree } from "@/lib/tree-cache"
+import { loadTree, saveTree } from "@/lib/tree-cache"
 import { createSkeletonTree } from "@/lib/framework-templates"
 import { MindmapNode, ExpandRequest } from "@/types/mindmap"
 import { toast } from "sonner"
@@ -63,6 +63,11 @@ export default function MapPageContent() {
     const topic = searchParams.get('topic') || ''
     const framework = searchParams.get('framework') || 'BMC'
     const intent = searchParams.get('intent') || 'creation'
+    // free=1 → "자유롭게 시작하기" path: skip skeleton, mount root only.
+    // loaded=1 → user uploaded a file; root is already in the store, do not
+    //   re-seed from skeleton/l1_labels (we'd overwrite the imported tree).
+    const isFreeStart = searchParams.get('free') === '1'
+    const isLoaded = searchParams.get('loaded') === '1'
 
     const {
         rootNode,
@@ -89,6 +94,50 @@ export default function MapPageContent() {
     useEffect(() => {
         if (!topic || !framework) return
         if (rootNode) return  // 이미 로드됨
+
+        // 1) "자유롭게 시작하기" path — single root node, no L1 children.
+        //    Label is editable inline so the user can rename right away.
+        //    On refresh / new-tab the in-memory store is empty, so try
+        //    tree-cache first to recover any edits the user already made.
+        if (isFreeStart) {
+            const cached = topic ? loadTree(topic) : null
+            if (cached) {
+                setRootNode(cached)
+            } else {
+                setRootNode({
+                    id: 'root',
+                    label: topic,
+                    type: 'root',
+                    description: '자유 마인드맵',
+                    children: [],
+                })
+            }
+            setLoading(false)
+            return
+        }
+
+        // 2) File-uploaded path — SaveLoadButtons already called setRootNode
+        //    before navigating here. The rootNode guard above short-circuits
+        //    that case. If we got here, the in-memory store is empty (user
+        //    refreshed or opened the URL in a new tab), so try tree-cache;
+        //    fall back to a blank root rather than rendering null forever
+        //    when the cache also lost the topic.
+        if (isLoaded) {
+            const cached = topic ? loadTree(topic) : null
+            if (cached) {
+                setRootNode(cached)
+            } else {
+                setRootNode({
+                    id: 'root',
+                    label: topic || '불러온 마인드맵',
+                    type: 'root',
+                    description: '복원할 데이터를 찾지 못했어요. 다시 불러와 주세요.',
+                    children: [],
+                })
+            }
+            setLoading(false)
+            return
+        }
 
         // localStorage에서 Backend가 전달한 l1_labels 확인
         const storedLabels = localStorage.getItem('mindmap_l1_labels')
@@ -129,7 +178,7 @@ export default function MapPageContent() {
         }
 
         setLoading(false)
-    }, [topic, framework, intent, rootNode, setRootNode, setLoading])
+    }, [topic, framework, intent, rootNode, setRootNode, setLoading, isFreeStart, isLoaded])
 
     // Handle node expansion (supports add mode)
     const handleExpand = useCallback(async (node: MindmapNode) => {

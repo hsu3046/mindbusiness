@@ -14,8 +14,8 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from config import GEMINI_API_KEY
-from schemas.expand_schema import ExpandRequest, ExpandResponse
+from config import GEMINI_API_KEY, STAGE_CONFIG
+from schemas.expand_schema import ExpandRequest, ExpandResponse, ExpandResponseSchema
 from lib.json_utils import safe_json_parse_tracked
 from lib.gemini_config import build_config, get_model
 
@@ -108,36 +108,90 @@ class NodeExpander:
                 request, generate_count, force_logic_tree
             )
 
-            # 5. Call Gemini Flash (model + temperature from STAGE_CONFIG["expand"]).
-            #    `seed` (optional) is forwarded to GenerateContentConfig via the
-            #    `**extra` passthrough — None = standard stochastic, integer =
-            #    deterministic for debug/A-B/CI golden-output tests.
+            # 5. Resolve the per-depth stage (Phase 1 depth curve).
+            #    `expand_l1..l4` exists; otherwise fall back to bare "expand".
+            #    The child layer = current_depth + 1 (L0 root expanding into L1).
+            target_layer = min(max(request.current_depth + 1, 1), 4)
+            stage_key = f"expand_l{target_layer}"
+            if stage_key not in STAGE_CONFIG:
+                stage_key = "expand"
+
+            # 6. Call Gemini. `seed` (optional) is forwarded for repro;
+            #    L3+ adds anti-repetition penalties so siblings don't all
+            #    start with the same lead noun ("효율적인 X / 효율적인 Y").
+            #    `response_schema` enforces structured output at the model
+            #    level, eliminating the JSON recovery chain in the happy
+            #    path — but we keep mime + recovery as defense-in-depth.
             extra: dict = {}
             if request.seed is not None:
                 extra["seed"] = request.seed
-            response = await client.aio.models.generate_content(
-                model=get_model("expand"),
-                contents=user_contents,
-                config=build_config(
-                    "expand",
-                    response_mime_type="application/json",
-                    system_instruction=system_instruction,
-                    **extra,
-                ),
-            )
+            if target_layer >= 3:
+                extra["presence_penalty"] = 0.4
+                extra["frequency_penalty"] = 0.3
+
+            try:
+                response = await client.aio.models.generate_content(
+                    model=get_model(stage_key),
+                    contents=user_contents,
+                    config=build_config(
+                        stage_key,
+                        response_mime_type="application/json",
+                        system_instruction=system_instruction,
+                        response_schema=ExpandResponseSchema,
+                        **extra,
+                    ),
+                )
+            except (TypeError, ValueError) as schema_err:
+                # Some google-genai versions reject Optional[...] in
+                # response_schema. Fall back to mime-only — the recovery
+                # chain handles malformed output, and telemetry will
+                # surface the regression so we can fix the schema.
+                logger.warning(
+                    "response_schema rejected (%s) — falling back to mime-only",
+                    schema_err,
+                )
+                response = await client.aio.models.generate_content(
+                    model=get_model(stage_key),
+                    contents=user_contents,
+                    config=build_config(
+                        stage_key,
+                        response_mime_type="application/json",
+                        system_instruction=system_instruction,
+                        **extra,
+                    ),
+                )
 
             # 6. Parse and validate (track recovery for telemetry).
             json_str = response.text
             data, parse_recovery = safe_json_parse_tracked(json_str)
             children = data.get("children", [])
 
-            # 7. Post-process: adjust count
+            # 7. Post-process:
+            #    (a) cap count, (b) drop dupes vs existing children, (c) drop
+            #    same-call dupes, (d) score importance, (e) regenerate IDs.
             children = self._adjust_children_count(
                 children,
                 generate_count,
                 request,
-                force_logic_tree
+                force_logic_tree,
             )
+            children = self._dedupe_children(children, request.existing_children or [])
+
+            applied_framework_id = data.get("applied_framework_id")
+            for idx, child in enumerate(children):
+                # Honor model-supplied importance only when it's a clear
+                # signal (1, 3, 4, 5). Otherwise (None or default 2) compute
+                # heuristically so the frontend has a real distribution to
+                # render with.
+                model_imp = child.get("importance")
+                if model_imp not in (1, 3, 4, 5):
+                    child["importance"] = self._score_importance(
+                        child,
+                        idx,
+                        request.current_depth,
+                        applied_framework_id,
+                    )
+
             data["children"] = children
 
             # 8. Regenerate unique IDs (ASCII-safe to keep React Flow happy)
@@ -151,18 +205,21 @@ class NodeExpander:
             validated_result = ExpandResponse.model_validate(data)
 
             # 9. Telemetry — one structured line per expansion.
-            #    Read by Phase 0 baseline measurement (parse_recovery rate,
-            #    returned/requested ratio, confidence distribution).
+            #    Phase 1 adds stage + intent + dna flags.
             logger.info(
-                "expand_telemetry depth=%d framework=%s used=%s requested=%d returned=%d "
-                "confidence=%.2f language=%s parse_recovery=%s seed=%s applied=%s",
+                "expand_telemetry depth=%d stage=%s framework=%s used=%s "
+                "requested=%d returned=%d confidence=%.2f language=%s "
+                "intent=%s dna=%s parse_recovery=%s seed=%s applied=%s",
                 request.current_depth,
+                stage_key,
                 request.current_framework_id,
                 ",".join(request.used_frameworks) if request.used_frameworks else "-",
                 generate_count,
                 len(children),
                 validated_result.confidence_score,
                 request.language,
+                request.intent_mode or "-",
+                "y" if request.context_vector else "n",
                 parse_recovery,
                 request.seed if request.seed is not None else "-",
                 validated_result.applied_framework_id or "-",
@@ -275,6 +332,49 @@ Rule: {layer_def.get('rule', 'Generate relevant sub-items.')}
 Format: {layer_def.get('format', 'Short phrases')}
 """
 
+        # Business DNA — when smart-classify produced a context_vector, inject
+        # it so children are grounded in THIS user's specific business rather
+        # than generic framework boilerplate.
+        dna_section = ""
+        if request.context_vector:
+            cv = request.context_vector
+            parts = []
+            if cv.summary:
+                parts.append(f"- Identity: {cv.summary}")
+            if cv.target:
+                parts.append(f"- Target: {cv.target}")
+            if cv.edge:
+                parts.append(f"- Edge: {cv.edge}")
+            if cv.objective:
+                parts.append(f"- Objective: {cv.objective}")
+            if parts:
+                dna_section = (
+                    "\n[BUSINESS DNA]\n"
+                    + "\n".join(parts)
+                    + "\nUse these to make children specific to THIS business, not generic.\n"
+                )
+
+        # Intent mode — slight tone-shift hint. Optional and cheap.
+        intent_section = ""
+        if request.intent_mode:
+            tone_map = {
+                "creation": "User is in CREATION mode — favor generative, opportunity-shaped children.",
+                "diagnosis": "User is in DIAGNOSIS mode — favor causal, problem-decomposing children.",
+                "choice": "User is in CHOICE mode — favor evaluative, comparison-shaped children.",
+                "strategy": "User is in STRATEGY mode — favor goal/plan/checkpoint-shaped children.",
+            }
+            intent_section = f"\n[INTENT]\n{tone_map.get(request.intent_mode, request.intent_mode)}\n"
+
+        # Anti-repetition nudge for L3+ — pairs with presence/frequency
+        # penalties; cheap belt-and-braces against same-leading-word siblings.
+        anti_rep_section = ""
+        if request.current_depth + 1 >= 3:
+            anti_rep_section = (
+                "\n[DIVERSITY]\n"
+                "Each child MUST start with a different first word from its siblings. "
+                "Avoid repeating the same leading noun across children.\n"
+            )
+
         # Build force instruction
         force_instruction = self._build_force_instruction(
             request.force_framework,
@@ -285,7 +385,8 @@ Format: {layer_def.get('format', 'Short phrases')}
         system_instruction = (
             f"{self.system_prompt}\n\n"
             f"[TARGET LANGUAGE]\n{request.language}\n"
-            f"{sibling_section}{parent_sibling_section}{existing_section}{layer_section}\n"
+            f"{sibling_section}{parent_sibling_section}{existing_section}"
+            f"{dna_section}{intent_section}{layer_section}{anti_rep_section}\n"
             "[CONSTRAINTS]\n"
             f"- Generate exactly {generate_count} children (no more, no less)\n"
             f"- Current Framework: {request.current_framework_id}\n"
@@ -326,6 +427,64 @@ Format: {layer_def.get('format', 'Short phrases')}
 
         logger.info("Insufficient children (%d/%d) — using what AI returned", len(children), target_count)
         return children
+
+    @staticmethod
+    def _normalize_label(label: str) -> str:
+        """Lowercased, punctuation/whitespace-stripped form for dedup compare."""
+        return re.sub(r"[\s\W_]+", "", (label or "").lower())
+
+    def _dedupe_children(self, children: list, existing_labels: list) -> list:
+        """
+        Drop children whose normalized label collides with an existing
+        sibling (add-mode dedup) or with another child in the same response
+        (intra-call dedup). Prompt asks the model not to duplicate, but the
+        instruction is fragile — this post-pass makes it actually true.
+        """
+        seen = {self._normalize_label(s) for s in existing_labels if s}
+        out: list = []
+        dropped = 0
+        for child in children:
+            key = self._normalize_label(child.get("label", ""))
+            if not key:
+                # Unlabeled children are useless; drop.
+                dropped += 1
+                continue
+            if key in seen:
+                dropped += 1
+                continue
+            seen.add(key)
+            out.append(child)
+        if dropped:
+            logger.info("Dedup dropped %d duplicate child(ren)", dropped)
+        return out
+
+    def _score_importance(
+        self,
+        child: dict,
+        idx: int,
+        current_depth: int,
+        applied_framework_id: Optional[str],
+    ) -> int:
+        """
+        Compute an importance score (1-5) when the model didn't supply a
+        meaningful one. Heuristic only — the goal is "frontend has a real
+        distribution to render with" rather than ground-truth.
+
+        Position bonus: earlier children weight more. Type bonus: framework
+        anchors get a bump. Semantic bonus: finance/risk at shallow depths
+        get a bump. Capped at 4 to keep "5 = critical" reserved for the
+        future quality-rubric pass.
+        """
+        score = 3 if idx <= 1 else 2
+
+        if applied_framework_id and child.get("type") == "framework_branch":
+            score += 1
+
+        sem = child.get("semantic_type")
+        if sem in ("finance", "risk") and current_depth <= 2:
+            score += 1
+
+        return max(1, min(4, score))
     
     def _check_nesting_limit(self, used_frameworks: list) -> bool:
         """

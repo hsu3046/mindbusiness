@@ -73,7 +73,15 @@ STAGE_CONFIG = {
     "framework_pick":    {"model": MODEL_LITE,  "temperature": 0.1, "reasoning": "off"},
     "framework_fallback":{"model": MODEL_LITE,  "temperature": 0.1, "reasoning": "off"},
     "generate_l1":       {"model": MODEL_FLASH, "temperature": 0.4, "reasoning": "off"},
+    # Expand stages — depth-aware temperature curve. L1 should produce
+    # structured framework slots (cool, deterministic), L4 should produce
+    # surprising actions (hot, divergent). The bare `"expand"` key remains
+    # as a fallback for callers that don't pass depth.
     "expand":            {"model": MODEL_FLASH, "temperature": 0.6, "reasoning": "off"},
+    "expand_l1":         {"model": MODEL_LITE,  "temperature": 0.20, "reasoning": "low"},
+    "expand_l2":         {"model": MODEL_FLASH, "temperature": 0.45, "reasoning": "off"},
+    "expand_l3":         {"model": MODEL_FLASH, "temperature": 0.65, "reasoning": "off"},
+    "expand_l4":         {"model": MODEL_FLASH, "temperature": 0.85, "reasoning": "off"},
     # Report = two-stage Researcher + Writer (see api/logic/report_generator.py)
     "report_researcher": {"model": MODEL_FLASH, "temperature": 0.2, "reasoning": "off",
                           "use_search": True},

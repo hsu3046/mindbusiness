@@ -137,6 +137,20 @@ interface CustomNodeData {
     [key: string]: unknown
 }
 
+// Phase 1: tiny semantic-type indicator (top-left of node body).
+// Backend already produces `semantic_type`; this is the first place it's
+// surfaced visually. Tailwind palette tokens chosen to match the rest
+// of the app's accent colors.
+const SEMANTIC_TYPE_COLOR: Record<string, string> = {
+    finance: 'bg-emerald-500',
+    action: 'bg-indigo-500',
+    risk: 'bg-rose-500',
+    persona: 'bg-amber-500',
+    resource: 'bg-slate-400',
+    metric: 'bg-cyan-500',
+    // 'other' intentionally not mapped → no dot rendered
+}
+
 const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data: CustomNodeData }) {
     const style = getLevelStyle(data.level)
     const isRoot = data.level === 0
@@ -144,6 +158,11 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
     // Handle 위치 결정
     const targetPos = data.side === 'left' ? Position.Right : Position.Left
     const sourcePos = data.side === 'left' ? Position.Left : Position.Right
+
+    // Semantic type color (skip root and 'other' / unset)
+    const semanticDotClass = !isRoot && data.node?.semantic_type
+        ? SEMANTIC_TYPE_COLOR[data.node.semantic_type]
+        : undefined
 
     // L1 이상 노드에서 NodeToolbar 표시 (Root 제외)
     const showToolbar = data.level >= 1
@@ -246,6 +265,15 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
                         position={Position.Left}
                         className="!opacity-0 !w-1 !h-1"
                     />
+
+                    {/* Semantic type indicator — small colored dot, top-left */}
+                    {semanticDotClass && (
+                        <span
+                            className={`absolute top-1.5 left-1.5 h-1.5 w-1.5 rounded-full ${semanticDotClass}`}
+                            aria-hidden="true"
+                            title={data.node?.semantic_type}
+                        />
+                    )}
 
                     {/* Node Content */}
                     <div className="flex flex-col items-center">

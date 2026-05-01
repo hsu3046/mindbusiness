@@ -7,6 +7,7 @@ import { smartClassify } from "@/lib/api"
 import { LOADING_QUOTES, LoadingQuote } from "@/lib/framework-templates"
 import { toast } from "sonner"
 import { HeroInput, LoadingScreen, IntentMode } from "@/components/landing"
+import { useMindmapStore } from "@/stores/mindmap-store"
 import { SaveLoadButtons } from "@/components/mindmap/save-load-buttons"
 import { DottedGlowBackground } from "@/components/ui/dotted-glow-background"
 import { ConversationMessage, SmartClassifyResponse, isAPIError } from "@/types/mindmap"
@@ -18,6 +19,10 @@ type Step = "input" | "loading" | "question" | "generating"
 
 export default function HomePage() {
     const router = useRouter()
+    // Pre-seed the store with the user's smart-classify outputs so the
+    // map page has DNA + intent available for every subsequent expand call.
+    const setStoreContextVector = useMindmapStore((s) => s.setContextVector)
+    const setStoreIntentMode = useMindmapStore((s) => s.setIntentMode)
     const [step, setStep] = useState<Step>("input")
     const [topic, setTopic] = useState("")
     const [intentMode, setIntentMode] = useState<IntentMode>('creation')
@@ -75,6 +80,15 @@ export default function HomePage() {
                 intent_mode: intentMode,
                 conversation_history: conversationHistory
             })
+
+            // Stash DNA + intent in the store so /map's expand flow can use
+            // them. Done on every action path (ask_question / generate /
+            // fill_and_generate) — the user's intent is the same regardless
+            // of whether the AI needs another turn.
+            if (result.context_vector) {
+                setStoreContextVector(result.context_vector)
+            }
+            setStoreIntentMode(intentMode)
 
             if (result.action === "ask_question" && result.question) {
                 // DNA summary 저장 (AI가 누적 정보 기반으로 생성한 정제된 타이틀)

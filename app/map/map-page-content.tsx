@@ -104,8 +104,11 @@ export default function MapPageContent() {
         expandingNodeId,
         isLoading,
         language,
+        contextVector,
+        intentMode,
         setRootNode,
         setTopic,
+        setIntentMode,
         navigateTo,
         setExpanding,
         setLoading,
@@ -128,6 +131,16 @@ export default function MapPageContent() {
     useEffect(() => {
         setTopic(topic || null)
     }, [topic, setTopic])
+
+    // Seed intentMode from the URL when the store doesn't already have one
+    // (covers refresh / new-tab / direct URL access). The home page sets
+    // it during smart-classify; this is the recovery path.
+    useEffect(() => {
+        if (intentMode) return
+        if (intent === 'creation' || intent === 'diagnosis' || intent === 'choice' || intent === 'strategy') {
+            setIntentMode(intent)
+        }
+    }, [intent, intentMode, setIntentMode])
 
     // Initial Load: L1 노드 표시 (Backend에서 받은 l1_labels 우선 사용)
     useEffect(() => {
@@ -272,6 +285,10 @@ export default function MapPageContent() {
                 existing_children: existingChildren,
                 language,
                 ...(typeof seed === 'number' && Number.isFinite(seed) ? { seed } : {}),
+                // Phase 1: ground children in the user's actual business
+                // and intent. Both optional — backend degrades cleanly.
+                ...(contextVector ? { context_vector: contextVector } : {}),
+                ...(intentMode ? { intent_mode: intentMode } : {}),
             }
 
             const response = await expandNode(request)
@@ -333,6 +350,8 @@ export default function MapPageContent() {
         contextPath,
         framework,
         language,
+        contextVector,
+        intentMode,
         isDebug,
         searchParams,
         setExpanding,

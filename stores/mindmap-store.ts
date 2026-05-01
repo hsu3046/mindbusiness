@@ -1,6 +1,9 @@
 import { create } from 'zustand'
-import { MindmapNode } from '@/types/mindmap'
+import { MindmapNode, ContextVector } from '@/types/mindmap'
 import { saveTree } from '@/lib/tree-cache'
+
+/** Intent buckets the smart-classify pipeline emits. */
+export type IntentMode = 'creation' | 'diagnosis' | 'choice' | 'strategy'
 
 type ViewMode = 'card' | 'tree' | 'mindmap'
 
@@ -43,6 +46,19 @@ interface MindmapStore {
      * refresh; default Korean. Settable via setLanguage.
      */
     language: AppLanguage
+    /**
+     * Business DNA captured by smart-classify (summary/target/edge/objective).
+     * Populated by the home page after a successful classify, then forwarded
+     * into every ExpandRequest so generated children stay specific to the
+     * user's actual business instead of generic framework boilerplate.
+     */
+    contextVector: ContextVector | null
+    /**
+     * High-level intent (creation/diagnosis/choice/strategy) chosen on the
+     * landing page. Threaded into ExpandRequest as `intent_mode` so the
+     * prompt can tone-shift toward the right kind of children.
+     */
+    intentMode: IntentMode | null
 
     // Delete/Undo State
     deletedNodeBackup: DeletedNodeBackup | null
@@ -56,6 +72,8 @@ interface MindmapStore {
     // Actions
     setTopic: (topic: string | null) => void
     setLanguage: (language: AppLanguage) => void
+    setContextVector: (cv: ContextVector | null) => void
+    setIntentMode: (mode: IntentMode | null) => void
     setRootNode: (node: MindmapNode) => void
     setCurrentNode: (node: MindmapNode) => void
     navigateTo: (node: MindmapNode) => void
@@ -92,6 +110,8 @@ const initialState = {
     contextPath: [],
     topic: null as string | null,
     language: readPersistedLanguage(),
+    contextVector: null as ContextVector | null,
+    intentMode: null as IntentMode | null,
     deletedNodeBackup: null as DeletedNodeBackup | null,
     viewMode: 'mindmap' as ViewMode,
     expandingNodeId: null,
@@ -124,6 +144,9 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
             }
         }
     },
+
+    setContextVector: (cv) => set({ contextVector: cv }),
+    setIntentMode: (mode) => set({ intentMode: mode }),
 
     setRootNode: (node) => {
         set({

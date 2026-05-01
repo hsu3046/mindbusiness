@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 
+from schemas.context_vector import ContextVector
+
 
 class ExpandRequest(BaseModel):
     """Request model for expanding a specific node."""
@@ -92,10 +94,69 @@ class ExpandRequest(BaseModel):
         le=2_147_483_647,  # signed int32 ceiling (Gemini SDK accepts up to this)
     )
 
+    context_vector: Optional[ContextVector] = Field(
+        None,
+        description=(
+            "Business DNA from smart-classify (summary/target/edge/objective). "
+            "When present it's injected into the system_instruction so the AI "
+            "can ground children in the user's specific business context "
+            "instead of generic framework boilerplate. Optional — older "
+            "frontends don't carry it and we degrade gracefully."
+        ),
+    )
+
+    intent_mode: Optional[str] = Field(
+        None,
+        description=(
+            "User's high-level intent from smart-classify "
+            "(creation / diagnosis / choice / strategy). Tunes the prompt's "
+            "tone toward the right kind of children at deep levels. Optional."
+        ),
+        pattern="^(creation|diagnosis|choice|strategy)$",
+    )
+
+
+class ExpandChildSchema(BaseModel):
+    """
+    Strict schema for one generated child, used as Gemini's
+    `response_schema` so structured output is enforced at model level
+    rather than papered over by the JSON recovery chain.
+
+    Mirrors the loose dict fields ExpandResponse.children was using —
+    label/description are required, the others optional with defaults
+    so the model isn't forced to invent values for fields it can't
+    confidently fill.
+    """
+
+    label: str = Field(..., max_length=80)
+    description: Optional[str] = Field(None, max_length=300)
+    type: Optional[str] = Field(
+        None,
+        pattern="^(framework_branch|action_item|category_group|sub_branch|root|category)$",
+    )
+    semantic_type: Optional[str] = Field(
+        None,
+        pattern="^(finance|action|risk|persona|resource|metric|other)$",
+    )
+    importance: Optional[int] = Field(None, ge=1, le=5)
+
+
+class ExpandResponseSchema(BaseModel):
+    """Top-level shape Gemini must return when `response_schema` is set."""
+
+    children: List[ExpandChildSchema] = Field(...)
+    applied_framework_id: Optional[str] = Field(None)
+    expansion_mode: Optional[str] = Field(
+        None,
+        pattern="^(framework|logic_tree|semi_structured)$",
+    )
+    confidence_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    alternative_framework: Optional[str] = Field(None)
+
 
 class ExpandResponse(BaseModel):
     """Response from node expansion."""
-    
+
     children: List[dict] = Field(
         ...,
         description="Generated child nodes"

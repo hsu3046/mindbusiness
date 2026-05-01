@@ -78,6 +78,17 @@ export interface ExpandRequest {
      * stochastic generation.
      */
     seed?: number
+    /**
+     * Business DNA from smart-classify. When present the backend injects
+     * a `[BUSINESS DNA]` block into the system_instruction so generated
+     * children are specific to the user's actual business.
+     */
+    context_vector?: ContextVector
+    /**
+     * High-level intent (creation/diagnosis/choice/strategy). Tunes the
+     * prompt's tone toward the right kind of children at deep levels.
+     */
+    intent_mode?: 'creation' | 'diagnosis' | 'choice' | 'strategy'
 }
 
 export interface ExpandResponse {

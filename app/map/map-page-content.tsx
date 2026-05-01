@@ -63,6 +63,11 @@ export default function MapPageContent() {
     const topic = searchParams.get('topic') || ''
     const framework = searchParams.get('framework') || 'BMC'
     const intent = searchParams.get('intent') || 'creation'
+    // free=1 → "자유롭게 시작하기" path: skip skeleton, mount root only.
+    // loaded=1 → user uploaded a file; root is already in the store, do not
+    //   re-seed from skeleton/l1_labels (we'd overwrite the imported tree).
+    const isFreeStart = searchParams.get('free') === '1'
+    const isLoaded = searchParams.get('loaded') === '1'
 
     const {
         rootNode,
@@ -89,6 +94,28 @@ export default function MapPageContent() {
     useEffect(() => {
         if (!topic || !framework) return
         if (rootNode) return  // 이미 로드됨
+
+        // 1) "자유롭게 시작하기" path — single root node, no L1 children.
+        //    Label is editable inline so the user can rename right away.
+        if (isFreeStart) {
+            setRootNode({
+                id: 'root',
+                label: topic,
+                type: 'root',
+                description: '자유 마인드맵',
+                children: [],
+            })
+            setLoading(false)
+            return
+        }
+
+        // 2) File-uploaded path — SaveLoadButtons already called setRootNode
+        //    before navigating here. If the rootNode check above didn't
+        //    short-circuit (rare race), don't seed a skeleton on top of it.
+        if (isLoaded) {
+            setLoading(false)
+            return
+        }
 
         // localStorage에서 Backend가 전달한 l1_labels 확인
         const storedLabels = localStorage.getItem('mindmap_l1_labels')
@@ -129,7 +156,7 @@ export default function MapPageContent() {
         }
 
         setLoading(false)
-    }, [topic, framework, intent, rootNode, setRootNode, setLoading])
+    }, [topic, framework, intent, rootNode, setRootNode, setLoading, isFreeStart, isLoaded])
 
     // Handle node expansion (supports add mode)
     const handleExpand = useCallback(async (node: MindmapNode) => {

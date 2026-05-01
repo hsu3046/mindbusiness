@@ -246,14 +246,30 @@ async def stream_job(job_id: str, request: Request):
                     idle = 0.0
                     for chunk in chunks:
                         cursor += 1
-                        # Each chunk is already a JSON envelope:
+                        # Each chunk is normally a JSON envelope:
                         #   {"type": "text", "text": "..."}
                         #   {"type": "phase", "phase": "researching"|"writing"}
-                        # Decode so we can attach the cursor; fall back to a
-                        # plain text envelope if the row is somehow malformed.
+                        # Tolerate three other shapes without breaking the
+                        # SSE loop:
+                        #   - non-JSON raw text (legacy producers / KV rows
+                        #     written before the typed envelope landed)
+                        #   - JSON that happens to parse but isn't a dict
+                        #     (e.g. a single token like "42" or "true")
+                        #   - JSON dict missing the expected `type` field
+                        # All three get wrapped as a text envelope so the
+                        # client sees the chunk instead of the loop dying
+                        # with `"Stream forwarder error."`.
+                        envelope: dict
                         try:
-                            envelope = json.loads(chunk)
+                            parsed = json.loads(chunk)
                         except (ValueError, TypeError):
+                            parsed = None
+                        if (
+                            isinstance(parsed, dict)
+                            and parsed.get("type") in ("text", "phase")
+                        ):
+                            envelope = parsed
+                        else:
                             envelope = {"type": "text", "text": chunk}
                         envelope["cursor"] = cursor
                         payload = json.dumps(envelope, ensure_ascii=False)

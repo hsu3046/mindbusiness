@@ -20,9 +20,12 @@ import {
 /**
  * Home / back-to-main button with a confirmation step.
  *
- * The mindmap is auto-persisted to tree-cache on every mutation, so going
- * back doesn't actually lose anything — the dialog copy says so explicitly
- * to keep the user from feeling like they need to "save first".
+ * The mindmap is auto-persisted to tree-cache on every mutation and
+ * surfaces in the home page's "최근 마인드맵" list. The dialog copy
+ * names that list so users know where to find the map again — and warns
+ * that browser data isn't permanent (Safari ITP wipes after 7 days, any
+ * browser may evict under storage pressure), nudging them toward the
+ * download button for anything important.
  */
 export function HomeButton() {
     const router = useRouter()
@@ -40,7 +43,7 @@ export function HomeButton() {
                 }
             >
                 <HugeiconsIcon icon={Home01Icon} size={16} />
-                <span className="text-sm font-medium">메인</span>
+                <span className="text-sm font-medium">메인으로</span>
             </AlertDialogTrigger>
             <AlertDialogContent className="bg-white">
                 <AlertDialogHeader>
@@ -48,14 +51,22 @@ export function HomeButton() {
                         메인으로 돌아갈까요?
                     </AlertDialogTitle>
                     <AlertDialogDescription className="text-slate-500 break-keep leading-relaxed">
-                        지금까지 작성한 마인드맵은 자동으로 저장되어, 같은 주제로 다시 들어오면
-                        이어서 편집할 수 있어요. 다른 곳에서도 보관하려면 우상단 <strong>저장</strong>{" "}
-                        버튼으로 OPML/JSON 파일을 받아두는 걸 권장해요.
+                        지금까지 작성한 아이디어는 <strong>최근 아이디어 리스트</strong>
+                        에서 다시 열 수 있어요.
+                        <br />
+                        브라우저에 저장되는 방식이라 데이터가 정리되거나 1주일 이상
+                        접속하지 않으면 사라질 수 있으니, 중요한 아이디어는{" "}
+                        <strong>다운로드 버튼</strong>으로 백업해 두세요.
                     </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                    <AlertDialogCancel>취소</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => router.push("/")}>
+                    <AlertDialogCancel className="min-w-[100px]">
+                        취소
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                        onClick={() => router.push("/")}
+                        className="min-w-[160px]"
+                    >
                         메인으로
                     </AlertDialogAction>
                 </AlertDialogFooter>

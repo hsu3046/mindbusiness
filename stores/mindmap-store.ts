@@ -55,8 +55,24 @@ interface MindmapStore {
     currentNode: MindmapNode | null
     nodeHistory: MindmapNode[]
     contextPath: string[]
-    /** Topic key used to persist the tree to tree-cache. Set when the map page mounts. */
+    /**
+     * Random short id (12 hex). Used as the tree-cache key and the URL's
+     * `?id=`. Decouples persistence from the topic string, which can be
+     * long Korean text or contain URL-unsafe characters.
+     */
+    mindmapId: string | null
+    /**
+     * Display-only topic. Mirrors `rootNode.label` after edits, so the
+     * report panel and other consumers always see the user-edited title.
+     * No longer used as a cache key.
+     */
     topic: string | null
+    /**
+     * Framework key (BMC, LEAN, LOGIC, …). Persisted alongside the tree
+     * so the recent-maps list on the home page can re-open the map with
+     * the correct `?framework=` instead of guessing.
+     */
+    frameworkId: string | null
     /**
      * UI/AI language — flows into ExpandRequest.language so generated children
      * match the user's preference. Persisted to localStorage so it survives
@@ -94,7 +110,9 @@ interface MindmapStore {
     isLoading: boolean
 
     // Actions
+    setMindmapId: (id: string | null) => void
     setTopic: (topic: string | null) => void
+    setFrameworkId: (id: string | null) => void
     setLanguage: (language: AppLanguage) => void
     setContextVector: (cv: ContextVector | null) => void
     setIntentMode: (mode: IntentMode | null) => void
@@ -133,7 +151,9 @@ const initialState = {
     currentNode: null,
     nodeHistory: [],
     contextPath: [],
+    mindmapId: null as string | null,
     topic: null as string | null,
+    frameworkId: null as string | null,
     language: readPersistedLanguage(),
     contextVector: null as ContextVector | null,
     intentMode: null as IntentMode | null,
@@ -145,11 +165,22 @@ const initialState = {
     isLoading: false,
 }
 
-/** Internal: persist the current root tree to localStorage if a topic is set. */
-function persistTree(topic: string | null, rootNode: MindmapNode | null) {
-    if (!topic || !rootNode) return
+/**
+ * Internal: persist the current root tree to localStorage under the id,
+ * along with the framework + topic so the recent-maps list can rebuild
+ * the URL when the user re-opens it.
+ */
+function persistTree(
+    id: string | null,
+    rootNode: MindmapNode | null,
+    meta?: { frameworkId?: string | null; topic?: string | null },
+) {
+    if (!id || !rootNode) return
     try {
-        saveTree(topic, rootNode)
+        saveTree(id, rootNode, {
+            frameworkId: meta?.frameworkId ?? undefined,
+            topic: meta?.topic ?? undefined,
+        })
     } catch {
         // saveTree already logs; swallow to keep store mutations resilient
     }
@@ -158,7 +189,9 @@ function persistTree(topic: string | null, rootNode: MindmapNode | null) {
 export const useMindmapStore = create<MindmapStore>((set, get) => ({
     ...initialState,
 
+    setMindmapId: (mindmapId) => set({ mindmapId }),
     setTopic: (topic) => set({ topic }),
+    setFrameworkId: (frameworkId) => set({ frameworkId }),
 
     setLanguage: (language) => {
         set({ language })
@@ -185,13 +218,20 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
     },
 
     setRootNode: (node) => {
+        const nextTopic = node.label || get().topic
         set({
             rootNode: node,
             currentNode: node,
+            // Keep `topic` in sync with the root label so the report panel /
+            // any other reader sees the latest user-edited title.
+            topic: nextTopic,
             nodeHistory: [],
-            contextPath: []
+            contextPath: [],
         })
-        persistTree(get().topic, node)
+        persistTree(get().mindmapId, node, {
+            frameworkId: get().frameworkId,
+            topic: nextTopic,
+        })
     },
 
     setCurrentNode: (node) => set({ currentNode: node }),
@@ -261,7 +301,7 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
     setLoading: (loading) => set({ isLoading: loading }),
 
     expandNode: (nodeId, children, appliedFrameworkId) => {
-        const { rootNode, currentNode, topic } = get()
+        const { rootNode, currentNode, mindmapId, frameworkId, topic } = get()
         if (!rootNode || !currentNode) return
 
         // Recursively update node with children. When the AI applied a
@@ -290,11 +330,11 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
             currentNode: updatedCurrent,
             expandingNodeId: null
         })
-        persistTree(topic, updatedRoot)
+        persistTree(mindmapId, updatedRoot, { frameworkId, topic })
     },
 
     addChildNode: (parentId) => {
-        const { rootNode, currentNode, topic } = get()
+        const { rootNode, currentNode, mindmapId, frameworkId, topic } = get()
         if (!rootNode) return null
 
         // 새 노드 ID 생성 (UUID 형식)
@@ -332,13 +372,13 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
             currentNode: updatedCurrent,
             editingNodeId: newNodeId  // 새 노드를 편집 모드로 설정
         })
-        persistTree(topic, updatedRoot)
+        persistTree(mindmapId, updatedRoot, { frameworkId, topic })
 
         return newNode
     },
 
     updateNodeLabel: (nodeId, label) => {
-        const { rootNode, currentNode, topic } = get()
+        const { rootNode, currentNode, mindmapId, frameworkId, topic } = get()
         if (!rootNode) return
 
         const updateLabel = (node: MindmapNode): MindmapNode => {
@@ -355,16 +395,21 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
         const updatedRoot = updateLabel(rootNode)
         const updatedCurrent = currentNode ? updateLabel(currentNode) : null
 
+        // If the user just edited the root label, mirror it into `topic`
+        // so the report panel and any other reader sees the new title.
+        const isRootEdit = rootNode.id === nodeId
+        const nextTopic = isRootEdit ? label : topic
         set({
             rootNode: updatedRoot,
             currentNode: updatedCurrent,
-            editingNodeId: null  // 편집 모드 해제
+            editingNodeId: null,  // 편집 모드 해제
+            ...(isRootEdit ? { topic: label } : {}),
         })
-        persistTree(topic, updatedRoot)
+        persistTree(mindmapId, updatedRoot, { frameworkId, topic: nextTopic })
     },
 
     deleteNode: (nodeId) => {
-        const { rootNode, currentNode, topic } = get()
+        const { rootNode, currentNode, mindmapId, frameworkId, topic } = get()
         if (!rootNode) return false
 
         // Root 노드는 삭제 불가
@@ -412,13 +457,13 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
                 index: nodeIndex
             }
         })
-        persistTree(topic, updatedRoot)
+        persistTree(mindmapId, updatedRoot, { frameworkId, topic })
 
         return true
     },
 
     undoDelete: () => {
-        const { rootNode, deletedNodeBackup, topic } = get()
+        const { rootNode, deletedNodeBackup, mindmapId, frameworkId, topic } = get()
         if (!rootNode || !deletedNodeBackup) return false
 
         const { node, parentId, index } = deletedNodeBackup
@@ -448,7 +493,7 @@ export const useMindmapStore = create<MindmapStore>((set, get) => ({
             currentNode: restoredRoot,
             deletedNodeBackup: null
         })
-        persistTree(topic, restoredRoot)
+        persistTree(mindmapId, restoredRoot, { frameworkId, topic })
 
         return true
     },

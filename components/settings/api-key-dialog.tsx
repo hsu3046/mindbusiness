@@ -113,10 +113,10 @@ export function ApiKeyDialog({ forceOpen, onOpenChange }: ApiKeyDialogProps) {
     return (
         <Dialog open={open} onOpenChange={handleOpenChange}>
             {/* Trigger: fixed bottom-right icon */}
-            <div className="fixed bottom-4 right-4 z-50 flex items-end gap-2">
+            <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2">
                 {/* Arrow label — only when key is missing */}
                 {needsKey && (
-                    <div className="mb-1 flex items-center gap-1.5 animate-fade-slide">
+                    <div className="flex items-center gap-1.5 animate-fade-slide">
                         <span className="text-xs text-amber-500/80 font-medium whitespace-nowrap">
                             API Key 설정
                         </span>

@@ -5,19 +5,27 @@ import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { smartClassify } from "@/lib/api"
 import { LOADING_QUOTES, LoadingQuote } from "@/lib/framework-templates"
+import { generateMindmapId } from "@/lib/tree-cache"
 import { toast } from "sonner"
-import { HeroInput, LoadingScreen, IntentMode } from "@/components/landing"
+import { HeroInput, LoadingScreen, IntentMode, RecentMapsList } from "@/components/landing"
 import { SaveLoadButtons } from "@/components/mindmap/save-load-buttons"
 import { DottedGlowBackground } from "@/components/ui/dotted-glow-background"
 import { ConversationMessage, SmartClassifyResponse, isAPIError } from "@/types/mindmap"
 import { isAnyKeyAvailable, openApiKeySettings } from "@/lib/api-key-store"
+import { useMindmapStore } from "@/stores/mindmap-store"
 import { HugeiconsIcon } from '@hugeicons/react'
-import { ArrowRight02Icon } from '@hugeicons/core-free-icons'
+import { ArrowRight02Icon, SparklesIcon } from '@hugeicons/core-free-icons'
+import { Button } from '@/components/ui/button'
 
 type Step = "input" | "loading" | "question" | "generating"
 
 export default function HomePage() {
     const router = useRouter()
+    // Pre-seed the mindmap store before navigating so the /map page picks
+    // up the topic + id without needing them in the URL (URL stays short
+    // with just ?id=).
+    const setStoreMindmapId = useMindmapStore((s) => s.setMindmapId)
+    const setStoreTopic = useMindmapStore((s) => s.setTopic)
     const [step, setStep] = useState<Step>("input")
     const [topic, setTopic] = useState("")
     const [intentMode, setIntentMode] = useState<IntentMode>('creation')
@@ -111,7 +119,10 @@ export default function HomePage() {
                 pendingNavTimer.current = setTimeout(() => {
                     pendingNavTimer.current = null
                     const framework = result.selected_framework_id || "LEAN"
-                    router.push(`/map?topic=${encodeURIComponent(finalSummary)}&framework=${framework}&intent=${intentMode}`)
+                    const id = generateMindmapId()
+                    setStoreMindmapId(id)
+                    setStoreTopic(finalSummary)
+                    router.push(`/map?id=${id}&framework=${framework}&intent=${intentMode}`)
                 }, 1500)
             }
             else {
@@ -124,7 +135,10 @@ export default function HomePage() {
                     localStorage.setItem('mindmap_l1_labels', JSON.stringify(result.l1_labels))
                 }
 
-                router.push(`/map?topic=${encodeURIComponent(finalSummary)}&framework=${framework}&intent=${intentMode}`)
+                const id = generateMindmapId()
+                setStoreMindmapId(id)
+                setStoreTopic(finalSummary)
+                router.push(`/map?id=${id}&framework=${framework}&intent=${intentMode}`)
             }
         } catch (error: unknown) {
             // API 에러 응답인지 확인 (api.ts에서 throw된 객체)
@@ -165,7 +179,7 @@ export default function HomePage() {
     }
 
     return (
-        <main className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-slate-50 font-sans text-slate-900 selection:bg-indigo-100 selection:text-indigo-900">
+        <main className="relative flex min-h-screen w-full items-center justify-center overflow-x-hidden bg-slate-50 font-sans text-slate-900 selection:bg-indigo-100 selection:text-indigo-900 py-12">
             {/* Background Pattern */}
             <DottedGlowBackground
                 className="pointer-events-none z-0"
@@ -197,22 +211,29 @@ export default function HomePage() {
                                 apiKeyError={apiKeyError}
                                 onApiKeyErrorClear={() => setApiKeyError("")}
                             />
-                            {/* Secondary actions: 자유 시작 + 불러오기 */}
-                            <div className="mt-6 flex items-center gap-4 text-sm text-slate-400">
-                                <button
+                            {/* Secondary actions: 자유 시작 + 불러오기 — outline 버튼 통일,
+                                자유 시작은 indigo accent로 시선 유도 (메인 input의 focus 색과 호응) */}
+                            <div className="mt-6 flex items-center gap-2">
+                                <Button
                                     type="button"
-                                    onClick={() =>
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                        const id = generateMindmapId()
+                                        setStoreMindmapId(id)
+                                        setStoreTopic("새 아이디어")
                                         router.push(
-                                            `/map?topic=${encodeURIComponent("새 아이디어")}&framework=LOGIC&intent=creation&free=1`,
+                                            `/map?id=${id}&framework=LOGIC&intent=creation&free=1`,
                                         )
-                                    }
-                                    className="hover:text-slate-700 transition-colors underline-offset-4 hover:underline"
+                                    }}
+                                    className="flex items-center gap-1.5 border-indigo-200 text-indigo-600 bg-white/60 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700"
                                 >
-                                    또는 자유롭게 시작하기 →
-                                </button>
-                                <span className="text-slate-200">·</span>
+                                    <HugeiconsIcon icon={SparklesIcon} size={16} />
+                                    <span className="text-sm font-medium">자유롭게 시작</span>
+                                </Button>
                                 <SaveLoadButtons showSave={false} />
                             </div>
+                            <RecentMapsList />
                         </motion.div>
                     )}
 

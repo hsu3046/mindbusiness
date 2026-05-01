@@ -60,7 +60,11 @@ function getParentSiblingLabels(
 
 export default function MapPageContent() {
     const searchParams = useSearchParams()
-    const topic = searchParams.get('topic') || ''
+    const idFromUrl = searchParams.get('id') || ''
+    // Legacy URL fallback — pre-id maps used `?topic=`. We accept it on
+    // first hit, migrate the cache key to the new id, and stop using the
+    // topic for persistence.
+    const legacyTopic = searchParams.get('topic') || ''
     const framework = searchParams.get('framework') || 'BMC'
     const intent = searchParams.get('intent') || 'creation'
     // free=1 → "자유롭게 시작하기" path: skip skeleton, mount root only.
@@ -75,8 +79,11 @@ export default function MapPageContent() {
         contextPath,
         expandingNodeId,
         isLoading,
+        topic: storeTopic,
         setRootNode,
         setTopic,
+        setMindmapId,
+        setFrameworkId,
         navigateTo,
         setExpanding,
         setLoading,
@@ -85,28 +92,43 @@ export default function MapPageContent() {
 
     const [reportOpen, setReportOpen] = useState(false)
 
-    // Bind topic to store so mutations persist to tree-cache automatically.
+    // Bind id to store so mutations persist to tree-cache under it. If the
+    // URL only carries a legacy ?topic= we mint a fresh id; the cache
+    // migration happens inside the loadTree call below (legacyTopic
+    // fallback recovers the old entry, then setRootNode persists it under
+    // the new id).
+    const effectiveId = idFromUrl || (legacyTopic ? `legacy-${legacyTopic.slice(0, 8)}` : '')
     useEffect(() => {
-        setTopic(topic || null)
-    }, [topic, setTopic])
+        if (effectiveId) setMindmapId(effectiveId)
+        if (legacyTopic && !storeTopic) setTopic(legacyTopic)
+        // Mirror the framework into the store so persistTree() knows which
+        // framework this map uses — the recent-maps list reads it from
+        // there to rebuild ?framework= when the user re-opens.
+        if (framework) setFrameworkId(framework)
+    }, [effectiveId, legacyTopic, storeTopic, framework, setMindmapId, setTopic, setFrameworkId])
 
     // Initial Load: L1 노드 표시 (Backend에서 받은 l1_labels 우선 사용)
     useEffect(() => {
-        if (!topic || !framework) return
+        if (!effectiveId || !framework) return
         if (rootNode) return  // 이미 로드됨
+
+        // The label we'll seed the root with when no cache hit recovers a
+        // real one. Prefer the live store value (set by the home page
+        // before navigating here), then the legacy ?topic=, then fallbacks.
+        const seedTopic = storeTopic || legacyTopic || ""
 
         // 1) "자유롭게 시작하기" path — single root node, no L1 children.
         //    Label is editable inline so the user can rename right away.
         //    On refresh / new-tab the in-memory store is empty, so try
         //    tree-cache first to recover any edits the user already made.
         if (isFreeStart) {
-            const cached = topic ? loadTree(topic) : null
+            const cached = loadTree(idFromUrl, legacyTopic || undefined)
             if (cached) {
                 setRootNode(cached)
             } else {
                 setRootNode({
                     id: 'root',
-                    label: topic,
+                    label: seedTopic || '새 아이디어',
                     type: 'root',
                     description: '자유 마인드맵',
                     children: [],
@@ -121,20 +143,30 @@ export default function MapPageContent() {
         //    that case. If we got here, the in-memory store is empty (user
         //    refreshed or opened the URL in a new tab), so try tree-cache;
         //    fall back to a blank root rather than rendering null forever
-        //    when the cache also lost the topic.
+        //    when the cache also lost the entry.
         if (isLoaded) {
-            const cached = topic ? loadTree(topic) : null
+            const cached = loadTree(idFromUrl, legacyTopic || undefined)
             if (cached) {
                 setRootNode(cached)
             } else {
                 setRootNode({
                     id: 'root',
-                    label: topic || '불러온 마인드맵',
+                    label: seedTopic || '불러온 마인드맵',
                     type: 'root',
                     description: '복원할 데이터를 찾지 못했어요. 다시 불러와 주세요.',
                     children: [],
                 })
             }
+            setLoading(false)
+            return
+        }
+
+        // 3) Normal smart-classify path — try the cache first (covers
+        //    refresh after user has been editing) before consuming the
+        //    one-shot l1_labels from localStorage.
+        const cached = loadTree(idFromUrl, legacyTopic || undefined)
+        if (cached) {
+            setRootNode(cached)
             setLoading(false)
             return
         }
@@ -149,7 +181,7 @@ export default function MapPageContent() {
                 // Backend에서 받은 Intent별 맞춤형 L1으로 Skeleton 생성
                 const rootNode: MindmapNode = {
                     id: 'root',
-                    label: topic,
+                    label: seedTopic,
                     type: 'root',
                     description: `${framework} Framework (${intent})`,
                     children: l1Labels.map((item, index) => ({
@@ -168,17 +200,29 @@ export default function MapPageContent() {
             } catch (e) {
                 console.error('Failed to parse l1_labels:', e)
                 // Fallback: Frontend 템플릿 사용
-                const skeleton = createSkeletonTree(topic, framework, 'Korean', intent)
+                const skeleton = createSkeletonTree(seedTopic, framework, 'Korean', intent)
                 setRootNode(skeleton)
             }
         } else {
             // Fallback: Frontend 템플릿 사용 (직접 URL 접근 등)
-            const skeleton = createSkeletonTree(topic, framework, 'Korean', intent)
+            const skeleton = createSkeletonTree(seedTopic, framework, 'Korean', intent)
             setRootNode(skeleton)
         }
 
         setLoading(false)
-    }, [topic, framework, intent, rootNode, setRootNode, setLoading, isFreeStart, isLoaded])
+    }, [
+        effectiveId,
+        idFromUrl,
+        legacyTopic,
+        storeTopic,
+        framework,
+        intent,
+        rootNode,
+        setRootNode,
+        setLoading,
+        isFreeStart,
+        isLoaded,
+    ])
 
     // Handle node expansion (supports add mode)
     const handleExpand = useCallback(async (node: MindmapNode) => {
@@ -230,13 +274,17 @@ export default function MapPageContent() {
             ]
             storeExpandNode(node.id, newChildren)
 
-            // Save tree to cache
-            const updatedRoot = useMindmapStore.getState().rootNode
-            if (updatedRoot) {
-                saveTree(topic, updatedRoot)
+            // Save tree to cache (store mutations also persist on their
+            // own; this is just defense-in-depth for the expand flow).
+            const state = useMindmapStore.getState()
+            if (state.rootNode && state.mindmapId) {
+                saveTree(state.mindmapId, state.rootNode, {
+                    frameworkId: state.frameworkId ?? undefined,
+                    topic: state.topic ?? undefined,
+                })
             }
 
-            toast.success('노드 확장 완료!', {
+            toast.success('아이디어 확장 완료!', {
                 description: `${response.children.length}개 하위 항목 추가됨`
             })
         } catch (error) {
@@ -245,7 +293,7 @@ export default function MapPageContent() {
             })
             setExpanding(null)
         }
-    }, [rootNode, contextPath, framework, setExpanding, storeExpandNode, topic])
+    }, [rootNode, contextPath, framework, setExpanding, storeExpandNode])
 
 
 
@@ -270,12 +318,13 @@ export default function MapPageContent() {
                 />
             </div>
 
-            {/* Report Panel */}
+            {/* Report Panel — title comes from the live root label so an
+                edit on the root propagates into the report immediately. */}
             <ReportPanel
                 open={reportOpen}
                 onOpenChange={setReportOpen}
                 rootNode={rootNode}
-                topic={topic}
+                topic={rootNode.label || storeTopic || legacyTopic}
                 frameworkId={framework}
             />
         </main>

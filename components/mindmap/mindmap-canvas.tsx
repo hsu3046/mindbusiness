@@ -6,6 +6,7 @@ import {
     Node,
     Edge,
     Controls,
+    ControlButton,
     useNodesState,
     useEdgesState,
     MiniMap,
@@ -26,6 +27,18 @@ import { calculateD3Layout } from '@/lib/d3-layout'
 import { useMindmapStore } from '@/stores/mindmap-store'
 import { HomeButton } from '@/components/mindmap/home-button'
 import { SaveLoadButtons } from '@/components/mindmap/save-load-buttons'
+import { Button } from '@/components/ui/button'
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 
 interface MindmapCanvasProps {
     rootNode: MindmapNode
@@ -145,8 +158,12 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
     const targetPos = data.side === 'left' ? Position.Right : Position.Left
     const sourcePos = data.side === 'left' ? Position.Left : Position.Right
 
-    // L1 이상 노드에서 NodeToolbar 표시 (Root 제외)
-    const showToolbar = data.level >= 1
+    // Toolbar visible on every node, including the root. The root is the
+    // user's mindmap title and should be editable; we just hide the delete
+    // action because removing the root makes no sense (and the store's
+    // deleteNode already refuses it).
+    const showToolbar = true
+    const canDelete = !isRoot
 
     // 확장 버튼 표시 조건: level < 4 AND children < max
     const maxChildren = MAX_CHILDREN_PER_LEVEL[data.level] || 5
@@ -207,17 +224,19 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
                         <HugeiconsIcon icon={PencilEdit01Icon} size={16} />
                     </button>
 
-                    {/* 4. 삭제 */}
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation()
-                            data.onDelete?.()
-                        }}
-                        className="p-1.5 rounded-md bg-white/90 hover:bg-red-100 text-slate-600 hover:text-red-600 shadow-sm border border-slate-200 transition-colors"
-                        title="삭제"
-                    >
-                        <HugeiconsIcon icon={Delete02Icon} size={16} />
-                    </button>
+                    {/* 4. 삭제 (root는 숨김) */}
+                    {canDelete && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation()
+                                data.onDelete?.()
+                            }}
+                            className="p-1.5 rounded-md bg-white/90 hover:bg-red-100 text-slate-600 hover:text-red-600 shadow-sm border border-slate-200 transition-colors"
+                            title="삭제"
+                        >
+                            <HugeiconsIcon icon={Delete02Icon} size={16} />
+                        </button>
+                    )}
                 </NodeToolbar>
             )}
             <NodeStatusIndicator
@@ -261,7 +280,7 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
                                         el.select()
                                     }
                                 }}
-                                placeholder="노드 이름 입력..."
+                                placeholder="아이디어 입력..."
                                 className="nodrag px-2 py-1 text-base font-semibold bg-white border border-indigo-400 rounded outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 min-w-[100px]"
                                 onKeyDown={(e) => {
                                     if (e.key === 'Enter') {
@@ -293,7 +312,7 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
                                     ${style.hasUnderline && style.underlineWeight === 'bold' ? 'border-b-2 border-slate-800' : ''}
                                 `}
                             >
-                                {data.label || '(빈 노드)'}
+                                {data.label || '(빈 아이디어)'}
                             </span>
                         )}
                     </div>
@@ -527,6 +546,14 @@ function MindmapCanvasInner({
         onNodeSelect?.(mindmapNode)
     }, [onNodeSelect, expanding])
 
+    // 더블 클릭 / 더블 탭 → 인라인 편집 모드. React Flow가 mouse + touch
+    // double-tap 둘 다 onNodeDoubleClick으로 발화시키므로 모바일도 자동 커버됨.
+    const handleNodeDoubleClick = useCallback((event: React.MouseEvent, node: Node) => {
+        if (expanding) return
+        const mindmapNode = node.data.node as MindmapNode
+        setEditingNodeId(mindmapNode.id)
+    }, [expanding, setEditingNodeId])
+
     return (
         <div className="relative w-full h-full min-h-screen bg-slate-50">
             {/* Aceternity Dotted Glow Background */}
@@ -548,6 +575,7 @@ function MindmapCanvasInner({
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
                     onNodeClick={handleNodeClick}
+                    onNodeDoubleClick={handleNodeDoubleClick}
                     nodeTypes={nodeTypes}
                     nodesDraggable={!expanding}
                     fitViewOptions={{ padding: 0.3 }}
@@ -556,49 +584,96 @@ function MindmapCanvasInner({
                     maxZoom={2}
                     proOptions={{ hideAttribution: true }}
                 >
-                    {/* 좌상단: 메인 + 재정렬 (탐색·뷰 컨트롤) */}
+                    {/* 좌상단: 메인 버튼만 */}
                     <Panel position="top-left" className="m-4">
-                        <div className="flex gap-2">
-                            <HomeButton />
-                            <button
-                                onClick={() => {
-                                    hasFittedView.current = false
-                                    setNodes(layoutedNodes)
-                                    setEdges(layoutedEdges)
-                                    if (fitViewTimerRef.current) clearTimeout(fitViewTimerRef.current)
-                                    fitViewTimerRef.current = setTimeout(() => {
-                                        fitView({ padding: 0.3, duration: 500 })
-                                        hasFittedView.current = true
-                                        fitViewTimerRef.current = null
-                                    }, 100)
-                                }}
-                                className="flex items-center gap-2 px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 rounded-lg shadow-md border border-slate-200 transition-colors"
-                                title="노드 재정렬"
-                            >
-                                <HugeiconsIcon icon={RefreshIcon} size={16} />
-                                <span className="text-sm font-medium">재정렬</span>
-                            </button>
-                        </div>
+                        <HomeButton />
                     </Panel>
 
-                    {/* 우상단: 저장/불러오기 + 기획서 (저장·산출물) */}
+                    {/* 우상단: 저장/불러오기 + 기획서 (저장·산출물).
+                        모든 버튼이 shadcn Button size="sm" (h-8) 로 통일되어
+                        높이가 정렬됩니다. 기획서만 indigo accent로 primary
+                        action임을 표시. */}
                     <Panel position="top-right" className="m-4">
                         <div className="flex gap-2">
                             <SaveLoadButtons />
                             {onReportOpen && (
-                                <button
-                                    onClick={onReportOpen}
-                                    className="flex items-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-md transition-colors"
-                                    title="AI 기획서 생성"
-                                >
-                                    <HugeiconsIcon icon={NoteIcon} size={16} />
-                                    <span className="text-sm font-medium">기획서</span>
-                                </button>
+                                <AlertDialog>
+                                    <AlertDialogTrigger
+                                        render={
+                                            <Button
+                                                size="sm"
+                                                title="AI 기획서 작성"
+                                                // shadcn Button base는 transparent border + bg-clip-padding
+                                                // 이라 부모 배경이 비쳐 흰 외곽선처럼 보임 → border 색을
+                                                // background와 동일하게 맞춰서 제거.
+                                                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 border-indigo-600 hover:border-indigo-700 text-white shadow-md"
+                                            />
+                                        }
+                                    >
+                                        <HugeiconsIcon icon={NoteIcon} size={16} />
+                                        <span className="text-sm font-medium">기획서 작성</span>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent className="bg-white">
+                                        <AlertDialogHeader>
+                                            <AlertDialogTitle className="text-slate-900">
+                                                기획서 작성을 시작할까요?
+                                            </AlertDialogTitle>
+                                            <AlertDialogDescription className="text-slate-500 break-keep leading-relaxed">
+                                                지금 아이디어를 바탕으로 기획서를 작성합니다.
+                                                <br />
+                                                대략 1-2분 정도 소요되며, 작성 중에도 아이디어를 편집할 수 있어요.
+                                            </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                            <AlertDialogCancel className="min-w-[100px]">
+                                                취소
+                                            </AlertDialogCancel>
+                                            <AlertDialogAction
+                                                onClick={onReportOpen}
+                                                className="min-w-[160px] bg-indigo-600 hover:bg-indigo-700 border-indigo-600 hover:border-indigo-700 text-white shadow-md"
+                                            >
+                                                작성하기
+                                            </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                </AlertDialog>
                             )}
                         </div>
                     </Panel>
 
-                    <Controls className="!bg-white !shadow-lg !rounded-lg !border-slate-200" />
+                    {/* Built-in zoom in / zoom out / fit-view + our own "재정렬"
+                        button as a ControlButton so it lives alongside the rest of
+                        the view controls. The interactivity-lock (자물쇠) button is
+                        hidden via showInteractive={false} — streaming-time drag is
+                        already auto-disabled in code, so a manual toggle is noise
+                        for end users. */}
+                    <Controls
+                        showInteractive={false}
+                        className="!bg-white !shadow-lg !rounded-lg !border-slate-200"
+                    >
+                        <ControlButton
+                            onClick={() => {
+                                hasFittedView.current = false
+                                setNodes(layoutedNodes)
+                                setEdges(layoutedEdges)
+                                if (fitViewTimerRef.current) clearTimeout(fitViewTimerRef.current)
+                                fitViewTimerRef.current = setTimeout(() => {
+                                    fitView({ padding: 0.3, duration: 500 })
+                                    hasFittedView.current = true
+                                    fitViewTimerRef.current = null
+                                }, 100)
+                            }}
+                            title="아이디어 재정렬"
+                            aria-label="아이디어 재정렬"
+                            // React Flow's default ".react-flow__controls-button svg
+                            // { fill: currentColor }" inflates HugeiconsIcon's
+                            // stroke-only paths into solid blobs. Override to keep
+                            // the icon as a line drawing.
+                            className="[&_svg]:!fill-none [&_svg]:!stroke-current"
+                        >
+                            <HugeiconsIcon icon={RefreshIcon} size={14} />
+                        </ControlButton>
+                    </Controls>
                     <MiniMap
                         nodeColor={(node) => {
                             const nodeData = node.data as CustomNodeData
@@ -613,7 +688,7 @@ function MindmapCanvasInner({
                         <Panel position="bottom-center" className="bg-indigo-600 text-white px-4 py-2 rounded-lg shadow-lg">
                             <div className="flex items-center gap-2">
                                 <HugeiconsIcon icon={Loading03Icon} size={16} className="animate-spin" />
-                                <span className="text-sm font-medium">노드 확장 중...</span>
+                                <span className="text-sm font-medium">아이디어 확장 중...</span>
                             </div>
                         </Panel>
                     )}

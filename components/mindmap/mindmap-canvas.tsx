@@ -47,17 +47,17 @@ interface MindmapCanvasProps {
     onReportOpen?: () => void
 }
 
-// Maximum children per level (for hiding expand/add button)
-const MAX_CHILDREN_PER_LEVEL: Record<number, number> = {
+// AI 자동 확장의 부모당 자식 수 한계. 백엔드 layer_definitions와 정렬.
+// (수동 추가 + 버튼은 이 한계와 무관 — 사용자 자율로 무제한)
+const MAX_AI_CHILDREN_PER_LEVEL: Record<number, number> = {
     1: 5,  // L1 → L2: max 5
     2: 4,  // L2 → L3: max 4
     3: 3,  // L3 → L4: max 3
-    // L4+ falls back to default below (3)
 }
-const MAX_CHILDREN_DEFAULT = 3
-// AI 자동 확장은 L7까지. L8+ 부터는 수동 추가만 가능.
+const MAX_AI_CHILDREN_DEFAULT = 3
+// AI 자동 확장 가능한 최대 깊이. L8+는 수동 추가만 가능.
 const MAX_AI_DEPTH = 7
-// 수동 추가 안전망 — 그래프 폭주 방지를 위한 soft cap
+// 수동 추가 깊이 안전망 — 그래프 폭주 방지용 soft cap
 const MAX_MANUAL_DEPTH = 30
 
 // ─── Level별 Monochrome 스타일 ───
@@ -185,11 +185,11 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
     const showToolbar = true
     const canDelete = !isRoot
 
-    // AI 확장 버튼: level < 7 AND children < max
-    // 수동 추가(+) 버튼: 레벨 제한 없음 (단, soft cap MAX_MANUAL_DEPTH 까지)
-    const maxChildren = MAX_CHILDREN_PER_LEVEL[data.level] || MAX_CHILDREN_DEFAULT
-    const canShowAIButton = data.level < MAX_AI_DEPTH && data.childrenCount < maxChildren
-    const canShowAddButton = data.level < MAX_MANUAL_DEPTH && data.childrenCount < maxChildren
+    // AI 확장 버튼: 깊이 < MAX_AI_DEPTH AND 자식 수 < AI cap
+    // 수동 추가(+) 버튼: 자식 수 무제한 (사용자 자율). 깊이만 soft cap.
+    const maxAIChildren = MAX_AI_CHILDREN_PER_LEVEL[data.level] || MAX_AI_CHILDREN_DEFAULT
+    const canShowAIButton = data.level < MAX_AI_DEPTH && data.childrenCount < maxAIChildren
+    const canShowAddButton = data.level < MAX_MANUAL_DEPTH
 
     // 편집 모드 진입 시 contenteditable 포커스 + 라벨 초기화. ref callback에
     // 두면 매 렌더마다 실행되어 사용자 키 입력을 덮어쓰는 문제가 있어서

@@ -495,8 +495,11 @@ function MindmapCanvasInner({
         }
         walk(rootNode)
         if (ids.size > 0) {
+            // One-shot hydration on first non-null rootNode. Only this effect
+            // mutates revealedParentIds from the persisted tree shape, so the
+            // subscription concern of the lint rule doesn't apply.
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setRevealedParentIds(prev => {
-                // 사용자가 이 effect 직전에 토글한 상태가 있을 수 있어 union으로 머지
                 const next = new Set(prev)
                 ids.forEach(id => next.add(id))
                 return next

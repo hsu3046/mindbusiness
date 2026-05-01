@@ -3,6 +3,18 @@ MindBusiness AI Backend - FastAPI Server
 Provides framework classification API for mindmap generation.
 """
 
+# ── Vercel sys.path shim ─────────────────────────────────────────────────────
+# Vercel's Python runtime imports this file from /var/task with /var/task on
+# sys.path, so `from logic.classifier import ...` would look for
+# /var/task/logic/ and fail (it lives at /var/task/api/logic/).
+# Inserting this file's directory makes every sibling-style import
+# (logic/, schemas/, lib/, jobs, config) resolve without rewriting all of them
+# to use an `api.` prefix.
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# ─────────────────────────────────────────────────────────────────────────────
+
 import asyncio
 import json
 import logging

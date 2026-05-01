@@ -33,14 +33,39 @@ from logic.strategy_registry import (
 logger = logging.getLogger(__name__)
 
 
-# Hard depth limit (L4 is maximum)
-MAX_DEPTH = 4
+# Hard depth limit for AI expansion (L7 is maximum). Past L7 → manual add only.
+MAX_DEPTH = 7
 
 # Framework nesting limit
 MAX_FRAMEWORK_NESTING = 2
 
 # Maximum retry for insufficient children
 MAX_RETRY = 1
+
+
+def _auto_pick_mode(target_layer: int) -> str:
+    """
+    Default mode selection by depth when the caller doesn't specify one.
+
+    L1 (categorization) → `mece`: top-level slots should be non-overlapping
+        and collectively exhaustive — a MECE-strict prompt + secondary
+        validator catches the predictable failure mode of this layer.
+    L2-L3 (analysis)    → `default`: balanced single Flash call. Most
+        expansions land here and the workhorse strategy is plenty.
+    L4 (action)         → `diverse`: action-oriented children benefit
+        from multiple angles (financial / operational / cultural / …),
+        so the 3-variant ensemble is worth the ~3x cost at the leaf
+        level where breadth matters more than speed.
+
+    The mapping is intentionally conservative — only L1 and L4 deviate
+    from `default`. We can tune this once telemetry shows which depths
+    actually benefit from which strategy.
+    """
+    if target_layer <= 1:
+        return "mece"
+    if target_layer >= 4:
+        return "diverse"
+    return "default"
 
 
 # Phase 2: user-selected expansion modes. Each maps to a small bundle of
@@ -154,11 +179,19 @@ class NodeExpander:
                 stage_key = "expand"
 
             # 5. Phase 3: resolve strategy + fan variants out in parallel.
-            #     `default` strategy = 1 variant (current behavior).
-            #     `diverse` = 3 variants → fuse_dedupe aggregator.
-            #     `deep` = Pro + HIGH reasoning, single variant.
-            #     `mece` = single variant + MECE validator pass.
-            mode = request.expansion_mode or "default"
+            #     If the caller didn't pick a mode, auto-select by depth:
+            #       L1 (categorize)  → mece    (clean non-overlapping slots)
+            #       L2-L3 (analyze)  → default (balanced 1-call)
+            #       L4 (action)      → diverse (3-variant ensemble for variety)
+            #     The user-facing mode picker was removed because the labels
+            #     weren't intuitive; the backend picks the right strategy
+            #     based on where in the tree the expansion is happening.
+            #     Callers can still override by passing `expansion_mode`
+            #     (debug / future power-user flow).
+            if request.expansion_mode:
+                mode = request.expansion_mode
+            else:
+                mode = _auto_pick_mode(target_layer)
             strategy = get_strategy(mode)
             base_temp = STAGE_CONFIG[stage_key]["temperature"]
             max_children = self._get_layer_definition(request.current_depth).get("max_children", 5)

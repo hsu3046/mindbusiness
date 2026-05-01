@@ -56,8 +56,19 @@ export function clearWidthCache(): void {
  * Calculate node width based on label text (internal)
  * Uses character count with different weights for Korean/ASCII
  */
+// 편집 모드 input 너비: min-w-[100px] + 부모 카드 px-4(32) + 버퍼 = 152
+// 빈 라벨 노드는 input이 렌더되므로 이 값을 floor로 사용해야 좌측 레이아웃에서
+// 부모와 겹치지 않음. (X 좌표가 estimatedWidth 기준으로 계산되므로 실제 너비
+// > 추정 너비면 좌측 노드는 부모 쪽으로 침범함.)
+const EDITING_INPUT_WIDTH = 152
+
 function calculateWidth(label: string, isRoot: boolean): number {
     const config = isRoot ? NODE_WIDTH_CONFIG.root : NODE_WIDTH_CONFIG.child
+
+    // 빈 라벨(편집 모드일 가능성 높음): input 렌더 너비를 floor로
+    if (!isRoot && !label.trim()) {
+        return Math.max(config.min, EDITING_INPUT_WIDTH)
+    }
 
     // Count Korean (CJK) vs ASCII characters
     let totalWidth = 0

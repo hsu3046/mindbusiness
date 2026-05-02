@@ -1,4 +1,4 @@
-# Contributing to MindBusiness AI
+# Contributing to MindBusiness
 
 Thanks for your interest in contributing! This document covers the basics.
 

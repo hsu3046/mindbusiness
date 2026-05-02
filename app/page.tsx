@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { smartClassify } from "@/lib/api"
@@ -245,6 +246,17 @@ export default function HomePage() {
                                 <SaveLoadButtons showSave={false} />
                             </div>
                             <RecentMapsList />
+                            {/* 소개 페이지 링크 — 첫 방문자가 도구의 정체성과
+                                지원 프레임워크를 빠르게 파악할 수 있도록. SEO
+                                관점에서도 indexable 한 콘텐츠 페이지 진입점. */}
+                            <p className="mt-10 text-center text-xs text-slate-400">
+                                <Link
+                                    href="/about"
+                                    className="hover:text-slate-600 transition-colors underline-offset-4 hover:underline"
+                                >
+                                    MindBusiness는 어떤 도구인가요? →
+                                </Link>
+                            </p>
                         </motion.div>
                     )}
 

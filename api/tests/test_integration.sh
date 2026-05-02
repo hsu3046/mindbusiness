@@ -1,5 +1,5 @@
 #!/bin/bash
-# MindBusiness AI - End-to-End Integration Test
+# MindBusiness - End-to-End Integration Test
 # Tests the complete flow: classify → generate → expand (L3→L4→L5)
 
 set -e  # Exit on error
@@ -8,7 +8,7 @@ BASE_URL="http://localhost:8000"
 TOPIC="카페 창업"
 LANGUAGE="Korean"
 
-echo "🧪 MindBusiness AI - 통합 테스트"
+echo "🧪 MindBusiness - 통합 테스트"
 echo "================================"
 echo ""
 

@@ -29,6 +29,28 @@ const nextConfig: NextConfig = {
             },
         ]
     },
+    /**
+     * Security headers — modest baseline that complements Vercel's HSTS.
+     * No CSP yet (would require auditing every inline script + 3rd-party
+     * domain we use); the headers below are safe drop-ins that don't
+     * affect functionality.
+     */
+    async headers() {
+        return [
+            {
+                source: "/:path*",
+                headers: [
+                    { key: "X-Content-Type-Options", value: "nosniff" },
+                    { key: "X-Frame-Options", value: "DENY" },
+                    { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+                    {
+                        key: "Permissions-Policy",
+                        value: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+                    },
+                ],
+            },
+        ]
+    },
 }
 
 export default nextConfig

@@ -1,5 +1,5 @@
 """
-MindBusiness AI Backend - FastAPI Server
+MindBusiness Backend - FastAPI Server
 Provides framework classification API for mindmap generation.
 """
 
@@ -56,7 +56,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="MindBusiness AI Backend",
+    title="MindBusiness Backend",
     description="AI-powered framework classifier for mindmap generation",
     version="1.0.0",
     # Disable API docs in production
@@ -107,7 +107,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "ok",
-        "service": "MindBusiness AI Backend",
+        "service": "MindBusiness Backend",
         "version": "1.0.0",
     }
 

@@ -2,7 +2,7 @@
 
 ## API key handling
 
-MindBusiness AI uses a **Bring Your Own Key (BYOK)** model.
+MindBusiness uses a **Bring Your Own Key (BYOK)** model.
 
 - The user's Gemini API key is stored **only in `localStorage`** in the browser.
 - It is sent on every API call as the `X-API-Key` HTTP header.

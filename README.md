@@ -1,4 +1,6 @@
-# 🧠 MindBusiness AI
+# 🧠 MindBusiness
+
+> Live at **[aib.vote](https://aib.vote)** · Built by **aib**
 
 ## Tagline-en
 
@@ -23,7 +25,7 @@ We'll turn your scattered thoughts into a clear, structured strategy — tailore
 ## Summary-en
 
 You have a business idea — but no idea where to begin?
-MindBusiness AI is more than just a mind mapping tool.
+MindBusiness is more than just a mind mapping tool.
 Start with a conversation. In just 3 exchanges, the AI understands your situation and organizes your ideas in the way that makes the most sense right now.
 When you get stuck, you're not on your own. The AI reads the context and suggests your next idea, right when you need it.
 Once everything comes together, the AI compiles it all into a draft business plan. The idea that lived only in your head — finally becomes a document.
@@ -31,7 +33,7 @@ Once everything comes together, the AI compiles it all into a draft business pla
 ## Summary-ko
 
 사업 아이디어는 있는데, 어디서부터 정리해야 할지 막막하신가요?
-MindBusiness AI는 단순한 마인드맵 도구가 아닙니다.
+MindBusiness는 단순한 마인드맵 도구가 아닙니다.
 처음엔 그냥 대화하세요. 3번의 질문만으로 AI가 상황을 파악하고, 지금 가장 필요한 방식으로 아이디어를 구조화합니다.
 막히는 순간도 혼자가 아닙니다. AI가 맥락을 읽고, 다음 아이디어를 바로 제안합니다.
 아이디어가 정리되면, AI가 모든 내용을 모아 사업계획서 초안으로 만들어드립니다. 머릿속에 있던 아이디어가, 처음으로 문서가 되는 순간입니다.
@@ -39,7 +41,7 @@ MindBusiness AI는 단순한 마인드맵 도구가 아닙니다.
 ## Summary-ja
 
 ビジネスのアイデアはあるのに、どこから手をつければいいかわからない。そんな経験はありませんか？
-MindBusiness AI は、単なるマインドマップツールではありません。
+MindBusiness は、単なるマインドマップツールではありません。
 まずは、気軽に話しかけてみてください。3回の会話だけで、AIがあなたの状況を把握し、今一番必要な形でアイデアを整理していきます。
 行き詰まっても、一人で悩まなくて大丈夫です。AIが文脈を読み取り、次のアイデアをすぐに提案してくれます。
 アイデアがまとまったら、AIがすべての内容をまとめて事業計画書の初稿を作成します。頭の中にあったアイデアが、はじめて「形」になる瞬間です。
@@ -244,4 +246,4 @@ This project is licensed under the [GNU General Public License v3.0](https://www
 
 ---
 
-*Built by [KnowAI](https://knowai.space) · © 2026 KnowAI*
+*Built by [aib](https://aib.vote) · © 2026 aib*

@@ -1,5 +1,5 @@
 """
-Configuration module for MindBusiness AI Backend.
+Configuration module for MindBusiness Backend.
 Manages environment variables, model settings, and framework definitions.
 """
 

@@ -58,6 +58,7 @@ Thumbs.db
 
 # ── Project-specific ─────────────────────────────────────────────────────────
 .agent/
+.claude/
 docs/
 src/
 Downloads/

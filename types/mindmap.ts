@@ -59,9 +59,26 @@ export interface ClarificationOption {
     framework_id?: string  // Only for Turn 1 (framework selection)
 }
 
+/**
+ * 조상 노드 정보 — 라벨뿐 아니라 description/type/framework까지 포함해
+ * 백엔드 expand prompt가 누적된 의미를 활용할 수 있게 함.
+ */
+export interface AncestorNode {
+    label: string
+    description?: string | null
+    type?: string | null  // 'ai' | 'manual' | 'root'
+    applied_framework_id?: string | null
+}
+
 export interface ExpandRequest {
     topic: string
     context_path: string[]
+    /**
+     * Same path as `context_path` but enriched with each ancestor's
+     * description / type / applied framework. Backend prefers this when
+     * present and falls back to `context_path` when missing.
+     */
+    ancestor_chain?: AncestorNode[]
     target_node_label: string
     current_framework_id: string
     used_frameworks: string[]
@@ -101,6 +118,17 @@ export interface ExpandRequest {
      * structure shape the AI produced.
      */
     expansion_mode?: 'default' | 'diverse' | 'deep' | 'mece'
+    /**
+     * 이전 expand가 needs_clarification=true였을 때 사용자가 입력한 답변.
+     * 백엔드는 이 답변을 system_instruction에 [USER CLARIFICATION] 섹션으로
+     * 주입해 AI가 활용하게 함. None이면 첫 호출.
+     */
+    clarification_answer?: string
+    /**
+     * Clarification 라운드 카운터. 0=최초, 1+=재호출. 3 도달 시 백엔드가
+     * needs_clarification 무시하고 강제 생성 (무한루프 방지).
+     */
+    clarification_turn?: number
 }
 
 export interface ExpandResponse {
@@ -113,6 +141,15 @@ export interface ExpandResponse {
         message: string
         code: string
     }
+    /**
+     * AI가 정보 부족으로 의미있는 expansion을 못 만들겠다고 신호. true면
+     * children=[] + clarifying_question 채워서 옴.
+     */
+    needs_clarification?: boolean
+    /**
+     * needs_clarification=true일 때 AI가 사용자에게 묻고 싶은 구체적 질문.
+     */
+    clarifying_question?: string
 }
 
 export interface ClassificationResponse {

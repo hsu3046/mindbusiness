@@ -1,0 +1,114 @@
+{
+  "_meta": {
+    "version": 1,
+    "key_format": "{framework}|{intent}|{target_layer}",
+    "lookup_priority": [
+      "{framework}|{intent}|{target_layer}",
+      "{framework}|*|{target_layer}",
+      "{framework}|*|*",
+      "default|*|{target_layer}",
+      "default|*|*"
+    ],
+    "notes": "Examples are illustrative — model should follow STYLE and SPECIFICITY level, not copy content. All Korean."
+  },
+
+  "BMC|creation|2": [
+    {
+      "topic": "강남 카페 창업",
+      "target": "비용 구조",
+      "children": [
+        { "label": "임대료 (월 800-1200만원)", "description": "강남 1층 33㎡ 기준 보증금 1억+월세 1000만원선" },
+        { "label": "원두 + 부재료 (매출의 25%)", "description": "고품질 스페셜티 원두 비중 + 우유/시럽 부재료" },
+        { "label": "인건비 (3-4명, 월 900만원)", "description": "오픈조 1+홀 1+주말 알바 시급 11500원 기준" }
+      ]
+    },
+    {
+      "topic": "1인 디자인 스튜디오",
+      "target": "고객 관계",
+      "children": [
+        { "label": "월 1회 진행 리뷰 미팅", "description": "온/오프 정기 미팅으로 신뢰 형성 + 추가 요구사항 발굴" },
+        { "label": "프로젝트 종료 후 30일 무상 수정", "description": "버그/사소한 변경 무료 처리로 만족도 확보" },
+        { "label": "포트폴리오 노출 동의 협상", "description": "출시 후 사례 공개 권한과 추가 할인 교환" }
+      ]
+    }
+  ],
+
+  "BMC|creation|3": [
+    {
+      "topic": "강남 카페 창업",
+      "target": "20대 여성 직장인",
+      "children": [
+        { "label": "점심시간 빠른 픽업 선호", "description": "11:30-13:00 5분 내 수령 가능해야 재방문" },
+        { "label": "SNS에 올릴 사진 가치 중시", "description": "라떼아트, 인테리어, 디저트 비주얼이 선택 기준" },
+        { "label": "12-15천원대 가격 저항", "description": "한 끼 + 음료 합쳐 2만원 선이 심리적 한계" }
+      ]
+    },
+    {
+      "topic": "1인 디자인 스튜디오",
+      "target": "정기 콘텐츠 발행",
+      "children": [
+        { "label": "주 1회 작업 과정 영상 (Reels)", "description": "30-60초 타임랩스 + 캡션으로 작업 노하우 노출" },
+        { "label": "월 1회 케이스 스터디 블로그", "description": "프로젝트 결과물 + 의사결정 근거 정리" },
+        { "label": "분기별 무료 템플릿 배포", "description": "리드 매그넷 — 이메일 수집 + 검색 노출 효과" }
+      ]
+    }
+  ],
+
+  "BMC|creation|4": [
+    {
+      "topic": "강남 카페 창업",
+      "target": "12-15천원대 가격 저항",
+      "children": [
+        { "label": "오후 2-4시 음료 30% 세일", "description": "오프피크 채우기 + 가격 저항 완화" },
+        { "label": "스탬프 10잔에 1잔 무료", "description": "방문 단가는 유지하되 누적 인지된 가격 낮춤" }
+      ]
+    }
+  ],
+
+  "LEAN|creation|2": [
+    {
+      "topic": "프리랜서용 정산 자동화 SaaS",
+      "target": "Problem",
+      "children": [
+        { "label": "여러 클라이언트 청구서 수동 작성", "description": "월말 1-2일 소요, 누락/오타 빈발" },
+        { "label": "원천세 8.8% 계산 실수", "description": "세무사 의존 또는 직접 계산 시 오류 위험" },
+        { "label": "미수금 추적 어려움", "description": "발송 후 입금 확인까지 일일이 메일/통화" }
+      ]
+    }
+  ],
+
+  "SWOT|diagnosis|2": [
+    {
+      "topic": "동네 베이커리 매출 하락",
+      "target": "Weakness",
+      "children": [
+        { "label": "오전 10시 이전 신상품 부족", "description": "출근길 수요 흡수 못 함 (경쟁 카페는 7시부터 진열)" },
+        { "label": "온라인 주문 채널 부재", "description": "배민/쿠팡이츠 미입점 → 비대면 수요 유실" },
+        { "label": "직원 1명 운영 — 피크타임 대응 부족", "description": "12-13시 줄 길어 5명 중 2명 이탈 추정" }
+      ]
+    }
+  ],
+
+  "default|*|2": [
+    {
+      "topic": "임의 주제",
+      "target": "주요 카테고리 X",
+      "children": [
+        { "label": "구체적 항목 1 (수치/기준 포함)", "description": "왜 이게 X 안에 들어가는지 1-2 문장" },
+        { "label": "구체적 항목 2 (다른 측면)", "description": "항목 1과 겹치지 않는 새 측면" },
+        { "label": "구체적 항목 3 (또 다른 측면)", "description": "MECE 유지하며 X를 채우는 마지막 슬롯" }
+      ]
+    }
+  ],
+
+  "default|*|3": [
+    {
+      "topic": "임의 주제",
+      "target": "특정 범주의 한 항목",
+      "children": [
+        { "label": "이 항목의 특성/통점 1 (구체)", "description": "왜 이게 중요한지 측정 가능한 형태로" },
+        { "label": "이 항목의 특성/통점 2 (다른 각도)", "description": "1과 다른 차원" }
+      ]
+    }
+  ]
+}

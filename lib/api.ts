@@ -9,8 +9,80 @@ import {
     isAPIError
 } from '@/types/mindmap'
 import { getFromCache, setToCache, generateCacheKey } from './cache'
-import { getApiHeaders } from './api-key-store'
+import { getApiHeaders, isAnyKeyAvailable } from './api-key-store'
 import { API_BASE_URL } from './api-config'
+
+/**
+ * 사용자 친화적 에러. UI에서 이 인스턴스를 잡으면 토스트에 메시지 그대로 노출 +
+ * `kind`로 추가 액션(예: 설정 열기) 결정 가능.
+ */
+export class FriendlyApiError extends Error {
+    kind: 'no_key' | 'invalid_key' | 'rate_limit' | 'timeout' | 'validation' | 'server' | 'network'
+    retry: boolean
+    constructor(message: string, kind: FriendlyApiError['kind'], retry: boolean = false) {
+        super(message)
+        this.name = 'FriendlyApiError'
+        this.kind = kind
+        this.retry = retry
+    }
+}
+
+/**
+ * 백엔드 에러 응답 JSON `{detail: {error, message, retry}}` 형태를 파싱해
+ * 사용자 메시지로 변환. status별 케이스 + 메시지 sniff로 API 키 누락 감지.
+ */
+async function classifyExpandError(res: Response): Promise<FriendlyApiError> {
+    let detail: { error?: string; message?: string; retry?: boolean } | null = null
+    try {
+        const body = await res.json()
+        detail = body?.detail ?? null
+    } catch {
+        // 파싱 실패 — status만으로 판단
+    }
+
+    if (res.status === 401) {
+        return new FriendlyApiError(
+            'API 키가 유효하지 않아요. 우상단 설정에서 다시 확인해주세요.',
+            'invalid_key'
+        )
+    }
+    if (res.status === 408) {
+        return new FriendlyApiError(
+            detail?.message || 'AI 응답이 너무 오래 걸려요. 잠시 후 다시 시도해주세요.',
+            'timeout',
+            true
+        )
+    }
+    if (res.status === 429) {
+        return new FriendlyApiError(
+            '요청이 너무 잦아요. 1분쯤 기다린 뒤 다시 시도해주세요.',
+            'rate_limit',
+            true
+        )
+    }
+    if (res.status === 400) {
+        return new FriendlyApiError(
+            detail?.message || '확장할 수 없는 노드예요.',
+            'validation'
+        )
+    }
+
+    // 500 catch-all — 메시지에 인증 관련 키워드가 있으면 API 키 문제로 추정
+    const msg = `${detail?.message || ''} ${detail?.error || ''} ${res.statusText || ''}`
+    const looksLikeAuth = /api.?key|authent|unauth|credential|permission|forbidden|invalid.?key/i.test(msg)
+    if (looksLikeAuth) {
+        return new FriendlyApiError(
+            'Gemini API 키가 없거나 잘못됐어요. 우상단 설정에서 키를 입력해주세요.',
+            'no_key'
+        )
+    }
+
+    return new FriendlyApiError(
+        detail?.message || 'AI 확장에 실패했어요. 잠시 후 다시 시도해주세요.',
+        'server',
+        detail?.retry ?? false
+    )
+}
 
 export async function classifyIntent(userInput: string, language: string = 'Korean'): Promise<ClassificationResponse> {
     // 캐시 체크
@@ -97,17 +169,73 @@ export async function expandNode(request: ExpandRequest): Promise<ExpandResponse
     // No caching for expand - each expansion should be fresh
     // Tree cache (localStorage) is used instead for persistence
 
-    const res = await fetch(`${API_BASE_URL}/api/v1/expand`, {
-        method: 'POST',
-        headers: getApiHeaders(),
-        body: JSON.stringify(request)
-    })
-
-    if (!res.ok) {
-        throw new Error(`Expansion failed: ${res.statusText}`)
+    // 사전 점검: 사용자 키도 서버 키도 없으면 네트워크 호출 전 즉시 안내
+    if (!isAnyKeyAvailable()) {
+        throw new FriendlyApiError(
+            'AI 확장을 사용하려면 Gemini API 키가 필요해요. 우상단 설정에서 키를 입력해주세요.',
+            'no_key'
+        )
     }
 
-    return await res.json()
+    let res: Response
+    try {
+        res = await fetch(`${API_BASE_URL}/api/v1/expand`, {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify(request)
+        })
+    } catch {
+        throw new FriendlyApiError(
+            '서버에 연결할 수 없어요. 네트워크 상태를 확인해주세요.',
+            'network',
+            true
+        )
+    }
+
+    if (!res.ok) {
+        throw await classifyExpandError(res)
+    }
+
+    const data = await res.json() as ExpandResponse & {
+        error?: string | null
+        error_kind?: string | null
+    }
+
+    // 200 OK이지만 백엔드가 에러로 분류한 케이스 — error/error_kind 채워서 옴.
+    // (자동 재시도까지 백엔드가 했는데도 실패한 경우. 프론트는 사용자에게
+    //  명확히 알리고 retry 여부는 error_kind에 따라 결정.)
+    if (data.error && data.error_kind) {
+        const kindToFriendly: Record<string, FriendlyApiError> = {
+            permanent_validation: new FriendlyApiError(data.error, 'validation'),
+            permanent_auth: new FriendlyApiError(
+                'API 키가 유효하지 않아요. 우상단 설정에서 다시 확인해주세요.',
+                'invalid_key'
+            ),
+            permanent_quota: new FriendlyApiError(
+                '요청이 너무 잦아요. 1분쯤 기다린 뒤 다시 시도해주세요.',
+                'rate_limit',
+                true
+            ),
+            transient_parse: new FriendlyApiError(
+                'AI 응답을 해석하지 못했어요. 다시 시도해주세요.',
+                'server',
+                true
+            ),
+            transient_api: new FriendlyApiError(
+                'AI가 응답하지 않아요. 잠시 후 다시 시도해주세요.',
+                'server',
+                true
+            ),
+            unknown: new FriendlyApiError(
+                'AI 확장에 실패했어요. 다시 시도해주세요.',
+                'server',
+                true
+            ),
+        }
+        throw kindToFriendly[data.error_kind] ?? new FriendlyApiError(data.error, 'server', true)
+    }
+
+    return data
 }
 
 // Export API base URL for debugging

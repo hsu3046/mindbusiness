@@ -127,7 +127,7 @@ export function SaveLoadButtons({
                     className="flex items-center gap-1.5"
                 >
                     <HugeiconsIcon icon={Download04Icon} size={16} />
-                    <span className="text-sm font-medium">다운로드</span>
+                    <span className="text-sm font-medium">저장하기</span>
                 </Button>
             )}
 

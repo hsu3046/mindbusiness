@@ -106,8 +106,9 @@ STRATEGIES: dict[str, GenerationStrategy] = {
                 label="cool",
                 temperature_delta=-0.15,
                 top_p=0.85,
-                presence_penalty=0.4,
-                frequency_penalty=0.3,
+                # presence/frequency_penalty 제거: Gemini 3 Flash가 미지원
+                # ("Penalty is not enabled for this model" 400). 다양성은
+                # temperature/top_p + 프롬프트로 확보.
                 prompt_addon_key="diverse",
                 weight=1.0,
             ),
@@ -124,8 +125,7 @@ STRATEGIES: dict[str, GenerationStrategy] = {
                 temperature_delta=+0.30,
                 top_p=0.97,
                 count_factor=1.5,
-                presence_penalty=0.6,
-                frequency_penalty=0.5,
+                # presence/frequency_penalty 제거: 동일 사유.
                 prompt_addon_key="diverse",
                 weight=0.9,
             ),

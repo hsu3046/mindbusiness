@@ -258,3 +258,12 @@
 .animate-fade-slide {
     animation: fadeSlide 2s ease-in-out infinite;
 }
+
+/* React Flow의 각 NodeWrapper(.react-flow__node)가 transform으로 자체
+   stacking context를 만들기 때문에, 내부 카드의 description tooltip이 sibling
+   노드 영역으로 흘러가면 sibling NodeWrapper에 가려짐. card hover 시 해당
+   NodeWrapper 자체의 z-index를 끌어올려 항상 최상단에 오도록.
+   :has() selector — 모던 브라우저(Chrome 105+, Safari 15.4+, Firefox 121+) 지원. */
+.react-flow__node:has(.group:hover) {
+    z-index: 1000 !important;
+}

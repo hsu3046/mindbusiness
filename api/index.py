@@ -132,17 +132,15 @@ async def validate_api_key(request: Request):
     api_key = request.headers.get("x-api-key")
     if not api_key:
         raise HTTPException(status_code=400, detail="X-API-Key header required.")
-    
+
     try:
         from google import genai
-        from lib.gemini_config import get_model
         client = genai.Client(api_key=api_key)
-        # Use the cheapest/fastest model for the round-trip — this only needs
-        # to confirm the key authenticates, not exercise reasoning.
-        await client.aio.models.generate_content(
-            model=get_model("validate_key"),
-            contents="Say 'ok' in one word.",
-        )
+        # 키 자체의 유효성만 검증 — generate_content는 모델 접근 권한까지
+        # 요구해서 preview 모델 권한이 없는 키는 유효해도 401로 떨어짐.
+        # models.list()는 인증만 필요해서 키 진단 목적엔 더 정확. 인증 실패 시
+        # await 시점에 예외가 발생하므로 결과를 소비할 필요 없음.
+        await client.aio.models.list(config={"page_size": 1})
         return {"valid": True, "message": "API key is valid."}
     except Exception as e:
         # Never echo the api_key or raw error message back to the client.

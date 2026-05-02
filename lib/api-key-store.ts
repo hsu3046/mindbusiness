@@ -72,8 +72,12 @@ export function preloadServerKeyStatus(): void {
             _listeners.forEach(fn => fn())
         })
         .catch(() => {
+            // Probe failed (timeout / cold start / network blip).
+            // Keep `_serverKeyChecked = false` so callers know the answer is
+            // unverified. Otherwise a transient probe failure would be
+            // indistinguishable from "server has no key", causing false-
+            // positive no_key preflights for users who actually have access.
             _serverHasKey = false
-            _serverKeyChecked = true
             _listeners.forEach(fn => fn())
         })
 }
@@ -100,4 +104,14 @@ export function isAnyKeyAvailable(): boolean {
  */
 export function serverHasKey(): boolean {
     return _serverHasKey
+}
+
+/**
+ * Has the server-key preload finished? Use this before treating
+ * `isAnyKeyAvailable() === false` as definitive — during the brief
+ * preload window the server-key state is unknown and defaults to false,
+ * which would otherwise produce a false-negative "no key" preflight.
+ */
+export function isServerKeyChecked(): boolean {
+    return _serverKeyChecked
 }

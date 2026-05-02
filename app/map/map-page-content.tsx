@@ -4,8 +4,11 @@ import { useEffect, useState, useCallback, useRef } from "react"
 import { useSearchParams } from "next/navigation"
 import { MindmapCanvas } from "@/components/mindmap/mindmap-canvas"
 import { ReportPanel } from "@/components/mindmap/report-panel"
+import { ClarificationDialog } from "@/components/mindmap/clarification-dialog"
+import { QualityGateDialog } from "@/components/mindmap/quality-gate-dialog"
 import { useMindmapStore } from "@/stores/mindmap-store"
-import { expandNode } from "@/lib/api"
+import { expandNode, FriendlyApiError } from "@/lib/api"
+import { openApiKeySettings } from "@/lib/api-key-store"
 import { loadTree, saveTree, legacyIdFromTopic } from "@/lib/tree-cache"
 import { createSkeletonTree } from "@/lib/framework-templates"
 import { MindmapNode, ExpandRequest } from "@/types/mindmap"
@@ -86,6 +89,35 @@ function collectAncestorFrameworks(
     return out
 }
 
+/**
+ * 조상 노드를 root → 직계 부모 순서로 수집. 라벨뿐 아니라 description /
+ * type / applied_framework_id 까지 함께 보내서 백엔드가 expansion 시
+ * 누적된 의미를 활용할 수 있게 함.
+ */
+function collectAncestorChain(
+    root: MindmapNode,
+    targetId: string,
+): Array<{
+    label: string
+    description?: string | null
+    type?: string | null
+    applied_framework_id?: string | null
+}> {
+    const ancestors: MindmapNode[] = []
+    let { parent } = findNodeWithParent(root, targetId)
+    while (parent) {
+        ancestors.unshift(parent)
+        const next = findNodeWithParent(root, parent.id)
+        parent = next.parent
+    }
+    return ancestors.map(n => ({
+        label: n.label,
+        description: n.description ?? null,
+        type: n.type ?? null,
+        applied_framework_id: n.applied_framework_id ?? null,
+    }))
+}
+
 export default function MapPageContent() {
     const searchParams = useSearchParams()
     const idFromUrl = searchParams.get('id') || ''
@@ -133,6 +165,21 @@ export default function MapPageContent() {
     const handleExpandRef = useRef<((node: MindmapNode) => Promise<void>) | null>(null)
 
     const [reportOpen, setReportOpen] = useState(false)
+
+    // Phase 2.1 — clarification 다이얼로그 (AI가 정보 부족 신호 보낸 경우)
+    const [clarification, setClarification] = useState<{
+        targetNode: MindmapNode
+        question: string
+        turn: number  // 0-base: 0 = 첫 질문, 2 = 마지막 (3턴 cap)
+    } | null>(null)
+
+    // Phase 2.1 — 저품질 결과 게이트 (children 적거나 confidence 낮은 경우)
+    const [qualityGate, setQualityGate] = useState<{
+        targetNode: MindmapNode
+        previewChildren: MindmapNode[]
+        confidence: number
+        appliedFrameworkId: string | null
+    } | null>(null)
 
     // Bind id to store so mutations persist to tree-cache under it. If the
     // URL only carries a legacy ?topic= we mint a fresh id; the cache
@@ -282,7 +329,13 @@ export default function MapPageContent() {
     ])
 
     // Handle node expansion (supports add mode)
-    const handleExpand = useCallback(async (node: MindmapNode) => {
+    const handleExpand = useCallback(async (
+        node: MindmapNode,
+        clarificationOpts?: {
+            answer: string
+            turn: number  // 0-base: 첫 답변 = 0 → 1로 카운트, 두 번째 = 1 → 2 ...
+        },
+    ) => {
         if (!rootNode) return
 
         setExpanding(node.id)
@@ -316,6 +369,10 @@ export default function MapPageContent() {
                 new Set([framework, ...ancestorFrameworks]),
             )
 
+            // 조상 chain (root → 직계부모) 라벨+description+type 수집.
+            // 백엔드가 ancestor_chain 우선 사용, 없으면 context_path fallback.
+            const ancestorChain = collectAncestorChain(rootNode, node.id)
+
             // `?debug=1` URLs may include `&seed=N` to pin Gemini sampling.
             const seedParam = searchParams.get('seed')
             const seed = isDebug && seedParam
@@ -325,6 +382,7 @@ export default function MapPageContent() {
             const request: ExpandRequest = {
                 topic: rootNode.label,
                 context_path: [...contextPath, node.label],
+                ancestor_chain: ancestorChain,
                 target_node_label: node.label,
                 current_framework_id: framework,
                 used_frameworks: usedFrameworks,
@@ -342,12 +400,52 @@ export default function MapPageContent() {
                 // → mece, L2-L3 → default, L4 → diverse). We don't send
                 // expansion_mode so the strategy registry's depth-based
                 // auto-select kicks in.
+                // Phase 2.1 — clarification 루프 상태. clarificationOpts.turn 은
+                // 다이얼로그 onSubmit 에서 이미 N+1 로 증가시켜 전달하므로
+                // 여기서 추가 증가 없이 그대로 백엔드에 보냄. (이중 증가하면
+                // 첫 답변이 turn=2 로 도달해 3턴 cap 이 한 라운드 빨리 작동.)
+                ...(clarificationOpts ? {
+                    clarification_answer: clarificationOpts.answer,
+                    clarification_turn: clarificationOpts.turn,
+                } : {}),
             }
 
             const response = await expandNode(request)
 
-            // Add mode: merge existing children with new ones
             const returnedChildren = response.children as MindmapNode[]
+
+            // Phase 2.1 — Quality Gate ① clarification 신호
+            // AI가 정보 부족이라 children=[] + 질문을 보낸 경우. 자식 추가 안
+            // 하고 ClarificationDialog 노출. 사용자 답변 후 재호출.
+            if (response.needs_clarification && response.clarifying_question) {
+                setClarification({
+                    targetNode: node,
+                    question: response.clarifying_question,
+                    turn: clarificationOpts?.turn ?? 0,
+                })
+                setExpanding(null)
+                return
+            }
+
+            // Phase 2.1 — Quality Gate ② 저품질 결과
+            // children 적거나 confidence 낮은 케이스. 자동 추가 안 하고
+            // QualityGateDialog로 사용자 결정 받음.
+            const tooFew = returnedChildren.length < 2
+            const lowConfidence =
+                typeof response.confidence_score === 'number' &&
+                response.confidence_score < 0.6
+            if (tooFew || lowConfidence) {
+                setQualityGate({
+                    targetNode: node,
+                    previewChildren: returnedChildren,
+                    confidence: response.confidence_score ?? 0,
+                    appliedFrameworkId: response.applied_framework_id ?? null,
+                })
+                setExpanding(null)
+                return
+            }
+
+            // 정상 — 자식 추가 + 토스트
             const newChildren = [
                 ...(node.children || []),
                 ...returnedChildren,
@@ -357,9 +455,6 @@ export default function MapPageContent() {
                 newChildren,
                 response.applied_framework_id ?? null,
             )
-
-            // Save tree to cache (store mutations also persist on their
-            // own; this is just defense-in-depth for the expand flow).
             const state = useMindmapStore.getState()
             if (state.rootNode && state.mindmapId) {
                 saveTree(state.mindmapId, state.rootNode, {
@@ -367,40 +462,41 @@ export default function MapPageContent() {
                     topic: state.topic ?? undefined,
                 })
             }
-
-            // Low confidence OR clearly insufficient children → warn the
-            // user with a "다시 시도" action instead of silently swallowing.
-            // We don't surface the backend's chosen target count today, so
-            // "insufficient" is anchored at < 2 children — a hard floor that
-            // any layer would consider a failure.
-            const tooFew = returnedChildren.length < 2
-            const lowConfidence =
-                typeof response.confidence_score === 'number' &&
-                response.confidence_score < 0.6
-            if (tooFew || lowConfidence) {
-                const reason = lowConfidence
-                    ? `신뢰도가 낮아요 (${Math.round((response.confidence_score ?? 0) * 100)}%)`
-                    : `${returnedChildren.length}개만 추가됐어요`
-                toast.warning('부분적으로만 확장됐어요', {
-                    description: reason,
-                    action: {
-                        label: '다시 시도',
-                        onClick: () => handleExpandRef.current?.(node),
-                    },
-                })
-            } else {
-                const baseDesc = `${returnedChildren.length}개 하위 항목 추가됨`
-                toast.success('아이디어 확장 완료!', {
-                    description: isDebug && typeof seed === 'number'
-                        ? `${baseDesc} · seed=${seed}`
-                        : baseDesc,
-                })
-            }
-        } catch (error) {
-            toast.error('확장 실패', {
-                description: error instanceof Error ? error.message : '알 수 없는 오류'
+            const baseDesc = `${returnedChildren.length}개 하위 항목 추가됨`
+            toast.success('아이디어 확장 완료!', {
+                description: isDebug && typeof seed === 'number'
+                    ? `${baseDesc} · seed=${seed}`
+                    : baseDesc,
             })
+        } catch (error) {
             setExpanding(null)
+
+            // FriendlyApiError 는 사용자 친화적 메시지 + kind 로 액션 분기
+            if (error instanceof FriendlyApiError) {
+                const isKeyIssue = error.kind === 'no_key' || error.kind === 'invalid_key'
+                const titleByKind: Record<FriendlyApiError['kind'], string> = {
+                    no_key: 'API 키가 필요해요',
+                    invalid_key: 'API 키 확인이 필요해요',
+                    rate_limit: '잠시만 기다려주세요',
+                    timeout: '응답이 늦어요',
+                    validation: '확장할 수 없어요',
+                    server: 'AI 확장 실패',
+                    network: '연결이 끊겼어요',
+                }
+                toast.error(titleByKind[error.kind], {
+                    description: error.message,
+                    action: isKeyIssue
+                        ? { label: '설정 열기', onClick: () => openApiKeySettings() }
+                        : error.retry
+                            ? { label: '다시 시도', onClick: () => handleExpandRef.current?.(node) }
+                            : undefined,
+                })
+                return
+            }
+
+            toast.error('AI 확장 실패', {
+                description: error instanceof Error ? error.message : '알 수 없는 오류가 발생했어요.',
+            })
         }
     }, [
         rootNode,
@@ -413,6 +509,8 @@ export default function MapPageContent() {
         searchParams,
         setExpanding,
         storeExpandNode,
+        setClarification,
+        setQualityGate,
     ])
 
     // Keep the trampoline pointing at the current handleExpand so the toast
@@ -452,6 +550,66 @@ export default function MapPageContent() {
                 topic={rootNode.label || storeTopic || legacyTopic}
                 frameworkId={framework}
             />
+
+            {/* Phase 2.1 — 정보 부족 시 후속 질문 */}
+            {clarification && (
+                <ClarificationDialog
+                    open={true}
+                    onOpenChange={(open) => {
+                        if (!open) setClarification(null)
+                    }}
+                    targetLabel={clarification.targetNode.label}
+                    question={clarification.question}
+                    turn={clarification.turn}
+                    onSubmit={(answer) => {
+                        const target = clarification.targetNode
+                        const nextTurn = clarification.turn + 1
+                        setClarification(null)
+                        // 같은 노드로 expand 재호출 + clarification 옵션 주입
+                        void handleExpand(target, { answer, turn: nextTurn })
+                    }}
+                />
+            )}
+
+            {/* Phase 2.1 — 저품질 결과 게이트 */}
+            {qualityGate && (
+                <QualityGateDialog
+                    open={true}
+                    onOpenChange={(open) => {
+                        if (!open) setQualityGate(null)
+                    }}
+                    targetLabel={qualityGate.targetNode.label}
+                    previewChildren={qualityGate.previewChildren}
+                    confidence={qualityGate.confidence}
+                    onAccept={() => {
+                        // 그대로 추가 — 트리 머지 + cache 저장. 응답이 framework
+                        // 를 골라 줬다면 그 정보까지 함께 저장 (ancestor framework
+                        // tracking 이 후속 expand 에서 정상 누적되도록).
+                        const target = qualityGate.targetNode
+                        const merged = [
+                            ...(target.children || []),
+                            ...qualityGate.previewChildren,
+                        ]
+                        storeExpandNode(target.id, merged, qualityGate.appliedFrameworkId)
+                        const state = useMindmapStore.getState()
+                        if (state.rootNode && state.mindmapId) {
+                            saveTree(state.mindmapId, state.rootNode, {
+                                frameworkId: state.frameworkId ?? undefined,
+                                topic: state.topic ?? undefined,
+                            })
+                        }
+                        toast.success('아이디어 확장 완료!', {
+                            description: `${qualityGate.previewChildren.length}개 추가됨`,
+                        })
+                        setQualityGate(null)
+                    }}
+                    onRetry={() => {
+                        const target = qualityGate.targetNode
+                        setQualityGate(null)
+                        void handleExpand(target)
+                    }}
+                />
+            )}
         </main>
     )
 }

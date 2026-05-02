@@ -31,6 +31,7 @@ Analyze if the target node represents a specific **Entity** that warrants deep a
 ### 1. MECE Principle
 - Children MUST NOT overlap with each other
 - Check SIBLING CONTEXT to avoid duplication with siblings' potential children
+- Each child label MUST start with a DIFFERENT first word from its siblings (avoid "효율적인 X / 효율적인 Y" type repetition)
 
 ### 2. Specificity
 - Avoid generic words: "Good", "Fast", "Efficient", "Important"
@@ -39,6 +40,41 @@ Analyze if the target node represents a specific **Entity** that warrants deep a
 ### 3. Consistency
 - Follow the Format specified in LAYER DEFINITION
 - All children should be at the same abstraction level
+
+---
+
+## Step 3: Quality Gate — When To Ask Instead Of Guess
+
+If you cannot produce specific, insightful children for the target node
+(because context is missing, ambiguous, or you'd resort to generic
+boilerplate like "효율성" / "최적화" / "관리"):
+
+  1. Set `needs_clarification: true`
+  2. Set `children: []` (do NOT fall back to generic placeholders)
+  3. Set `confidence_score` < 0.4
+  4. Populate `clarifying_question` with ONE specific question that, if
+     answered, would unblock useful expansion. Use TARGET LANGUAGE.
+     Concrete and actionable, not "tell me more".
+
+     Example bad: "사업에 대해 더 알려주세요."
+     Example good: "이 카페가 일반 카페와 다른 핵심 차별점은 어떤
+     부분인가요? (예: 원두 산지, 공간 분위기, 가격대 등)"
+
+  5. Do NOT explain or apologize in `description` fields — those are
+     hidden when needs_clarification is true.
+
+If you CAN produce useful children, leave `needs_clarification` false
+(or null) and `clarifying_question` null. Only signal clarification
+when honestly unable to be specific.
+
+If you receive a `[USER CLARIFICATION]` block in the system instruction,
+the user just answered your previous question — use it directly to
+ground the expansion. Do NOT ask another clarifying question unless
+the new information is still genuinely insufficient.
+
+If you receive `[FINAL ATTEMPT]`, the user has already answered 3
+questions. Produce best-effort children. Do NOT set
+`needs_clarification: true` — escape hatch is closed.
 
 ---
 
@@ -75,7 +111,22 @@ Return JSON with the following structure:
   "applied_framework_id": "PERSONA" | "SWOT" | "CAUSE" | "PROCESS" | "SCAMPER" | null,
   "expansion_mode": "framework" | "logic_tree" | "semi_structured",
   "confidence_score": 0.85,
-  "alternative_framework": null
+  "alternative_framework": null,
+  "needs_clarification": false,
+  "clarifying_question": null
+}
+```
+
+When asking for clarification, the JSON looks like:
+```json
+{
+  "children": [],
+  "applied_framework_id": null,
+  "expansion_mode": "logic_tree",
+  "confidence_score": 0.3,
+  "alternative_framework": null,
+  "needs_clarification": true,
+  "clarifying_question": "이 카페의 주요 타겟 고객은 누구인가요? (연령대 / 직업군 등)"
 }
 ```
 

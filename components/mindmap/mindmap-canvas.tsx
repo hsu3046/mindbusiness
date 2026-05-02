@@ -26,6 +26,7 @@ import { calculateD3Layout } from '@/lib/d3-layout'
 import { useMindmapStore } from '@/stores/mindmap-store'
 import { HomeButton } from '@/components/mindmap/home-button'
 import { SaveLoadButtons } from '@/components/mindmap/save-load-buttons'
+import { ExportPdfButton } from '@/components/mindmap/export-pdf-button'
 import { Button } from '@/components/ui/button'
 import {
     AlertDialog,
@@ -47,17 +48,17 @@ interface MindmapCanvasProps {
     onReportOpen?: () => void
 }
 
-// Maximum children per level (for hiding expand/add button)
-const MAX_CHILDREN_PER_LEVEL: Record<number, number> = {
+// AI 자동 확장의 부모당 자식 수 한계. 백엔드 layer_definitions와 정렬.
+// (수동 추가 + 버튼은 이 한계와 무관 — 사용자 자율로 무제한)
+const MAX_AI_CHILDREN_PER_LEVEL: Record<number, number> = {
     1: 5,  // L1 → L2: max 5
     2: 4,  // L2 → L3: max 4
     3: 3,  // L3 → L4: max 3
-    // L4+ falls back to default below (3)
 }
-const MAX_CHILDREN_DEFAULT = 3
-// AI 자동 확장은 L7까지. L8+ 부터는 수동 추가만 가능.
+const MAX_AI_CHILDREN_DEFAULT = 3
+// AI 자동 확장 가능한 최대 깊이. L8+는 수동 추가만 가능.
 const MAX_AI_DEPTH = 7
-// 수동 추가 안전망 — 그래프 폭주 방지를 위한 soft cap
+// 수동 추가 깊이 안전망 — 그래프 폭주 방지용 soft cap
 const MAX_MANUAL_DEPTH = 30
 
 // ─── Level별 Monochrome 스타일 ───
@@ -185,11 +186,11 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
     const showToolbar = true
     const canDelete = !isRoot
 
-    // AI 확장 버튼: level < 7 AND children < max
-    // 수동 추가(+) 버튼: 레벨 제한 없음 (단, soft cap MAX_MANUAL_DEPTH 까지)
-    const maxChildren = MAX_CHILDREN_PER_LEVEL[data.level] || MAX_CHILDREN_DEFAULT
-    const canShowAIButton = data.level < MAX_AI_DEPTH && data.childrenCount < maxChildren
-    const canShowAddButton = data.level < MAX_MANUAL_DEPTH && data.childrenCount < maxChildren
+    // AI 확장 버튼: 깊이 < MAX_AI_DEPTH AND 자식 수 < AI cap
+    // 수동 추가(+) 버튼: 자식 수 무제한 (사용자 자율). 깊이만 soft cap.
+    const maxAIChildren = MAX_AI_CHILDREN_PER_LEVEL[data.level] || MAX_AI_CHILDREN_DEFAULT
+    const canShowAIButton = data.level < MAX_AI_DEPTH && data.childrenCount < maxAIChildren
+    const canShowAddButton = data.level < MAX_MANUAL_DEPTH
 
     // 편집 모드 진입 시 contenteditable 포커스 + 라벨 초기화. ref callback에
     // 두면 매 렌더마다 실행되어 사용자 키 입력을 덮어쓰는 문제가 있어서
@@ -226,8 +227,26 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data.isEditing])
 
+    // 카드 hover 시 React Flow의 부모 NodeWrapper(.react-flow__node) z-index를
+    // 직접 조작. :has() CSS만으론 일부 브라우저/React Flow inline style을 못
+    // 이겨서 description tooltip이 sibling 노드에 가려짐.
+    const wrapperRef = useRef<HTMLDivElement>(null)
+    const handleMouseEnter = useCallback(() => {
+        const nw = wrapperRef.current?.closest('.react-flow__node') as HTMLElement | null
+        if (nw) nw.style.zIndex = '1000'
+    }, [])
+    const handleMouseLeave = useCallback(() => {
+        const nw = wrapperRef.current?.closest('.react-flow__node') as HTMLElement | null
+        if (nw) nw.style.zIndex = ''
+    }, [])
+
     return (
-        <div className="group relative">
+        <div
+            ref={wrapperRef}
+            className="group relative"
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+        >
             {/* Custom hover toolbar — React Flow의 NodeToolbar는 portal로
                 렌더되어 group-hover가 안 닿아서, 직접 absolute로 노드 위에
                 배치. 카드 hover 시 opacity로 페이드인. */}
@@ -371,11 +390,8 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
                                 >
                                     {data.label || '새 아이디어'}
                                 </span>
-                                {!isRoot && data.node?.description && (
-                                    <span className="mt-1 max-w-[180px] text-[11px] leading-snug text-slate-400 break-keep whitespace-normal">
-                                        {data.node.description}
-                                    </span>
-                                )}
+                                {/* description은 인라인 표시 X — 카드 hover 시
+                                    툴팁으로 노출 (NodeStatusIndicator 래퍼에서 처리) */}
                             </>
                         )}
                     </div>
@@ -408,6 +424,21 @@ const MindmapNodeComponent = memo(function MindmapNodeComponent({ data }: { data
                     )}
                 </div>
             </NodeStatusIndicator>
+
+            {/* Description hover tooltip — group-hover 패턴으로 + / 수정 / 삭제
+                버튼과 동일한 방식. portal이 아니라 노드 트리 내부에 absolute로
+                두기 때문에 React Flow zoom transform과 함께 스케일됨.
+                노드 위에는 toolbar가 있으니 아래로 배치. */}
+            {!isRoot && data.node?.description && (
+                <div
+                    className="absolute left-1/2 -translate-x-1/2 top-full mt-3 w-max max-w-[320px] px-3 py-1.5 text-xs leading-snug bg-slate-50 text-slate-700 border border-slate-200 rounded-md shadow-md whitespace-normal break-keep text-left opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none"
+                >
+                    {data.node.description}
+                    {/* arrow — popup 위쪽으로 향하는 삼각형 (rotate-45 사각형의
+                        좌상/우상 두 대각선만 border로 그어 popup body와 자연 연결) */}
+                    <div className="absolute left-1/2 -translate-x-1/2 -top-[5px] size-2.5 rotate-45 bg-slate-50 border-t border-l border-slate-200" />
+                </div>
+            )}
         </div>
     )
 })
@@ -695,6 +726,7 @@ function MindmapCanvasInner({
                     <Panel position="top-right" className="m-4">
                         <div className="flex gap-2">
                             <SaveLoadButtons />
+                            <ExportPdfButton />
                             {onReportOpen && (
                                 <AlertDialog>
                                     <AlertDialogTrigger
@@ -705,7 +737,9 @@ function MindmapCanvasInner({
                                                 // shadcn Button base는 transparent border + bg-clip-padding
                                                 // 이라 부모 배경이 비쳐 흰 외곽선처럼 보임 → border 색을
                                                 // background와 동일하게 맞춰서 제거.
-                                                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 border-indigo-600 hover:border-indigo-700 text-white shadow-md"
+                                                // shadow-xs로 다른 outline 버튼들과 그림자 크기 통일
+                                                // (이전 shadow-md는 시각적으로 더 커 보였음).
+                                                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 border-indigo-600 hover:border-indigo-700 text-white shadow-xs"
                                             />
                                         }
                                     >
@@ -752,15 +786,11 @@ function MindmapCanvasInner({
                     >
                         <ControlButton
                             onClick={() => {
-                                hasFittedView.current = false
+                                // 노드 레이아웃만 리셋 — 줌/팬은 유지. 줌 리셋은
+                                // React Flow Controls의 fit-view 버튼이 따로 바로
+                                // 위에 있어서 분리.
                                 setNodes(layoutedNodes)
                                 setEdges(layoutedEdges)
-                                if (fitViewTimerRef.current) clearTimeout(fitViewTimerRef.current)
-                                fitViewTimerRef.current = setTimeout(() => {
-                                    fitView({ padding: 0.3, duration: 500 })
-                                    hasFittedView.current = true
-                                    fitViewTimerRef.current = null
-                                }, 100)
                             }}
                             title="아이디어 재정렬"
                             aria-label="아이디어 재정렬"

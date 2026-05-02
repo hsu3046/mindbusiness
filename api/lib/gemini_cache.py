@@ -114,36 +114,47 @@ class CacheManager:
             # publish the result to all waiters.
             name: Optional[str] = None
             try:
-                cached = await client.aio.caches.create(
-                    model=model_id,
-                    config={
-                        "system_instruction": system_instruction,
-                        "ttl": f"{ttl_seconds}s",
-                        "display_name": f"expand-{key[:24]}",
-                    },
-                )
-                name = getattr(cached, "name", None)
-                if not name:
-                    logger.warning("Cache create returned no name for %s", key)
-            except Exception as e:  # noqa: BLE001 — degrade gracefully on any error
-                # Common errors: "Cached content is too small" (< model min),
-                # "Model does not support caching" (preview), quota, network.
-                logger.info("Cache create skipped (%s): %s", key, e)
-                name = None
-
-            async with self._lock:
-                if name:
-                    self._handles[key] = _Entry(
-                        name=name,
-                        created_at=time.monotonic(),
-                        ttl_seconds=ttl_seconds,
+                try:
+                    cached = await client.aio.caches.create(
+                        model=model_id,
+                        config={
+                            "system_instruction": system_instruction,
+                            "ttl": f"{ttl_seconds}s",
+                            "display_name": f"expand-{key[:24]}",
+                        },
                     )
-                    self._handles.move_to_end(key)
-                    while len(self._handles) > MAX_CACHE_HANDLES:
-                        self._handles.popitem(last=False)
-                self._inflight.pop(key, None)
-                if not fut.done():
-                    fut.set_result(name)
+                    name = getattr(cached, "name", None)
+                    if not name:
+                        logger.warning("Cache create returned no name for %s", key)
+                except Exception as e:  # noqa: BLE001 — degrade gracefully on any error
+                    # Common errors: "Cached content is too small" (< model min),
+                    # "Model does not support caching" (preview), quota, network.
+                    logger.info("Cache create skipped (%s): %s", key, e)
+                    name = None
+            finally:
+                # CancelledError (BaseException) is NOT caught by the inner
+                # `except Exception`. Without this finally + shield, an outer
+                # wait_for / cancel during create() leaves `_inflight[key]`
+                # populated and the future pending forever — concurrent waiters
+                # for the same key would then hang on `await fut` until they
+                # also time out, wedging the worker. shield() guarantees the
+                # publish runs to completion before the cancellation propagates.
+                async def _publish() -> None:
+                    async with self._lock:
+                        if name:
+                            self._handles[key] = _Entry(
+                                name=name,
+                                created_at=time.monotonic(),
+                                ttl_seconds=ttl_seconds,
+                            )
+                            self._handles.move_to_end(key)
+                            while len(self._handles) > MAX_CACHE_HANDLES:
+                                self._handles.popitem(last=False)
+                        self._inflight.pop(key, None)
+                        if not fut.done():
+                            fut.set_result(name)
+
+                await asyncio.shield(_publish())
             return name
 
         # Waiter path — block on the in-flight future.

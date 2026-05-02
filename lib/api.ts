@@ -9,7 +9,7 @@ import {
     isAPIError
 } from '@/types/mindmap'
 import { getFromCache, setToCache, generateCacheKey } from './cache'
-import { getApiHeaders, isAnyKeyAvailable } from './api-key-store'
+import { getApiHeaders, hasApiKey, isServerKeyChecked, serverHasKey } from './api-key-store'
 import { API_BASE_URL } from './api-config'
 
 /**
@@ -169,8 +169,11 @@ export async function expandNode(request: ExpandRequest): Promise<ExpandResponse
     // No caching for expand - each expansion should be fresh
     // Tree cache (localStorage) is used instead for persistence
 
-    // 사전 점검: 사용자 키도 서버 키도 없으면 네트워크 호출 전 즉시 안내
-    if (!isAnyKeyAvailable()) {
+    // 사전 점검: 사용자 키도 없고, 서버 키 preload 가 끝났는데도 없을 때
+    // 만 즉시 안내. preload 가 아직 안 끝난 경우 (false positive 위험)는
+    // 그냥 호출 진행 — 백엔드가 실제로 키 없으면 401/permanent_auth 로
+    // 응답하고 그 경로에서 친절 메시지가 노출됨.
+    if (!hasApiKey() && isServerKeyChecked() && !serverHasKey()) {
         throw new FriendlyApiError(
             'AI 확장을 사용하려면 Gemini API 키가 필요해요. 우상단 설정에서 키를 입력해주세요.',
             'no_key'

@@ -101,3 +101,13 @@ export function isAnyKeyAvailable(): boolean {
 export function serverHasKey(): boolean {
     return _serverHasKey
 }
+
+/**
+ * Has the server-key preload finished? Use this before treating
+ * `isAnyKeyAvailable() === false` as definitive — during the brief
+ * preload window the server-key state is unknown and defaults to false,
+ * which would otherwise produce a false-negative "no key" preflight.
+ */
+export function isServerKeyChecked(): boolean {
+    return _serverKeyChecked
+}

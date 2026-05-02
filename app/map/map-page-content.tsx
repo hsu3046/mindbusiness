@@ -178,6 +178,7 @@ export default function MapPageContent() {
         targetNode: MindmapNode
         previewChildren: MindmapNode[]
         confidence: number
+        appliedFrameworkId: string | null
     } | null>(null)
 
     // Bind id to store so mutations persist to tree-cache under it. If the
@@ -399,10 +400,13 @@ export default function MapPageContent() {
                 // → mece, L2-L3 → default, L4 → diverse). We don't send
                 // expansion_mode so the strategy registry's depth-based
                 // auto-select kicks in.
-                // Phase 2.1 — clarification 루프 상태
+                // Phase 2.1 — clarification 루프 상태. clarificationOpts.turn 은
+                // 다이얼로그 onSubmit 에서 이미 N+1 로 증가시켜 전달하므로
+                // 여기서 추가 증가 없이 그대로 백엔드에 보냄. (이중 증가하면
+                // 첫 답변이 turn=2 로 도달해 3턴 cap 이 한 라운드 빨리 작동.)
                 ...(clarificationOpts ? {
                     clarification_answer: clarificationOpts.answer,
-                    clarification_turn: clarificationOpts.turn + 1,  // 1-base 카운터로 백엔드에 전달
+                    clarification_turn: clarificationOpts.turn,
                 } : {}),
             }
 
@@ -435,6 +439,7 @@ export default function MapPageContent() {
                     targetNode: node,
                     previewChildren: returnedChildren,
                     confidence: response.confidence_score ?? 0,
+                    appliedFrameworkId: response.applied_framework_id ?? null,
                 })
                 setExpanding(null)
                 return
@@ -577,13 +582,15 @@ export default function MapPageContent() {
                     previewChildren={qualityGate.previewChildren}
                     confidence={qualityGate.confidence}
                     onAccept={() => {
-                        // 그대로 추가 — 트리 머지 + cache 저장
+                        // 그대로 추가 — 트리 머지 + cache 저장. 응답이 framework
+                        // 를 골라 줬다면 그 정보까지 함께 저장 (ancestor framework
+                        // tracking 이 후속 expand 에서 정상 누적되도록).
                         const target = qualityGate.targetNode
                         const merged = [
                             ...(target.children || []),
                             ...qualityGate.previewChildren,
                         ]
-                        storeExpandNode(target.id, merged, null)
+                        storeExpandNode(target.id, merged, qualityGate.appliedFrameworkId)
                         const state = useMindmapStore.getState()
                         if (state.rootNode && state.mindmapId) {
                             saveTree(state.mindmapId, state.rootNode, {

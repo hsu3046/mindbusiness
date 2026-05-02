@@ -319,9 +319,23 @@ async def expand_node(request: Request, body: ExpandRequest):
     Expand a specific node dynamically based on context.
     """
     start_time = time.time()
-    
+
+    api_key = _get_api_key(request)
+    if not api_key:
+        # 명시적 401 — 프론트의 classifyExpandError 가 status === 401 을
+        # invalid_key 로 매핑하고 [설정 열기] 액션을 노출. expander 안에서
+        # ValueError 로 새어 나가면 permanent_validation 으로 분류돼 사용자가
+        # 키 추가 경로를 못 찾는 P2 회귀를 막음.
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": "missing_api_key",
+                "message": "AI 확장을 사용하려면 Gemini API 키가 필요해요.",
+                "retry": False,
+            },
+        )
+
     try:
-        api_key = _get_api_key(request)
         result = await asyncio.wait_for(
             expander.expand_node(body, api_key=api_key),
             timeout=VERCEL_SAFE_TIMEOUT

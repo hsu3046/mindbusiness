@@ -72,8 +72,12 @@ export function preloadServerKeyStatus(): void {
             _listeners.forEach(fn => fn())
         })
         .catch(() => {
+            // Probe failed (timeout / cold start / network blip).
+            // Keep `_serverKeyChecked = false` so callers know the answer is
+            // unverified. Otherwise a transient probe failure would be
+            // indistinguishable from "server has no key", causing false-
+            // positive no_key preflights for users who actually have access.
             _serverHasKey = false
-            _serverKeyChecked = true
             _listeners.forEach(fn => fn())
         })
 }

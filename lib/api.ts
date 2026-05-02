@@ -41,6 +41,16 @@ async function classifyExpandError(res: Response): Promise<FriendlyApiError> {
     }
 
     if (res.status === 401) {
+        // 백엔드가 401 을 두 케이스에 사용:
+        //   - missing_api_key: 키 자체가 없음 → "키 필요" + 설정 열기
+        //   - invalid (default): 키는 있는데 거부됨 → "키 확인" + 설정 열기
+        // detail.error 로 분기 (없으면 invalid 로 가정).
+        if (detail?.error === 'missing_api_key') {
+            return new FriendlyApiError(
+                detail.message || 'AI 확장을 사용하려면 Gemini API 키가 필요해요.',
+                'no_key'
+            )
+        }
         return new FriendlyApiError(
             'API 키가 유효하지 않아요. 우상단 설정에서 다시 확인해주세요.',
             'invalid_key'
